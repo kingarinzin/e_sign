@@ -295,7 +295,6 @@ export default function PreparePage() {
 
   const fileUrl = id ? `/api/meetings/${id}/pdf` : "";
 
-
   return (
     <div className="h-screen flex flex-col bg-[#f0f2f5] overflow-hidden">
       {/* Top Navbar */}
@@ -481,3 +480,5 @@ export default function PreparePage() {
     </div>
   );
 }
+
+
