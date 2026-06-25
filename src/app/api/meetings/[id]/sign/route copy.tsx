@@ -16,17 +16,19 @@ function requireJwtSecret() {
   return secret;
 }
 
+
 function createTransporter() {
   return nodemailer.createTransport({
     host: "smtp.gmail.com",
     port: 587,
-    secure: false,
+    secure: false, // STARTTLS
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASSWORD,
     },
   });
 }
+
 
 export async function POST(
   req: Request,
@@ -46,43 +48,28 @@ export async function POST(
       return NextResponse.json({ error: "Invalid meeting ID" }, { status: 400 });
     }
 
-    // ─── Read both full and initial signatures ──────────────────
-    const {
-      signature,
-      signaturePositions,
-      initialSignature,
-      initialSignaturePositions,
-    } = await req.json();
+    const { signature, signaturePositions } = await req.json();
 
-    const hasFullSignature = signature && typeof signature === 'string' && signature.trim().length > 0;
-    const hasInitialSignature = initialSignature && typeof initialSignature === 'string' && initialSignature.trim().length > 0;
-
-    // Require at least one signature type
-    if (!hasFullSignature && !hasInitialSignature) {
-      return NextResponse.json(
-        { error: "At least one signature (full or initial) is required" },
-        { status: 400 }
-      );
+    // Validate signature is not empty
+    if (!signature || typeof signature !== 'string' || signature.trim().length === 0) {
+      return NextResponse.json({ error: "Valid signature is required" }, { status: 400 });
     }
 
-    // Validate full signature format if provided
-    if (hasFullSignature && !signature.startsWith('data:image/')) {
-      return NextResponse.json({ error: "Invalid full signature format" }, { status: 400 });
-    }
-
-    // Validate initial signature format if provided
-    if (hasInitialSignature && !initialSignature.startsWith('data:image/')) {
-      return NextResponse.json({ error: "Invalid initial signature format" }, { status: 400 });
+    // Additional validation - check if it looks like a data URL
+    if (!signature.startsWith('data:image/')) {
+      return NextResponse.json({ error: "Invalid signature format" }, { status: 400 });
     }
 
     const client = await clientPromise;
     const db = client.db("e_sign_db");
 
+    // Get user info
     const user = await db.collection("users").findOne({ _id: new ObjectId(decoded.id) });
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
+    // Fetch the meeting
     const meeting = await db.collection("meetings").findOne({
       _id: new ObjectId(meetingId),
     });
@@ -91,6 +78,7 @@ export async function POST(
       return NextResponse.json({ error: "Meeting not found" }, { status: 404 });
     }
 
+    // Find current user in participants
     const participantIndex = meeting.participants.findIndex(
       (p: any) => p.email.toLowerCase() === user.email.toLowerCase()
     );
@@ -104,6 +92,7 @@ export async function POST(
 
     const participant = meeting.participants[participantIndex];
 
+    // Check if already signed
     if (participant.signed) {
       return NextResponse.json(
         { error: "You have already signed this document" },
@@ -111,8 +100,10 @@ export async function POST(
       );
     }
 
+    // Check signing mode
     const signingMode = meeting.signingMode || "sequential";
 
+    // Check if it's their turn (only for sequential mode and signers)
     if (signingMode === "sequential" && participant.role === "Signer" && !participant.isCurrent) {
       return NextResponse.json(
         { error: "It's not your turn to sign yet" },
@@ -120,46 +111,35 @@ export async function POST(
       );
     }
 
-    // ─── Update participant with both signatures ──────────────────
+    // Update participant as signed
     meeting.participants[participantIndex].signed = true;
     meeting.participants[participantIndex].signedAt = new Date();
-
-    if (hasFullSignature) {
-      meeting.participants[participantIndex].signature = signature;
-      meeting.participants[participantIndex].signaturePositions = signaturePositions || [];
-    } else {
-      meeting.participants[participantIndex].signature = null;
-      meeting.participants[participantIndex].signaturePositions = [];
-    }
-
-    if (hasInitialSignature) {
-      meeting.participants[participantIndex].initialSignature = initialSignature;
-      meeting.participants[participantIndex].initialSignaturePositions = initialSignaturePositions || [];
-    } else {
-      meeting.participants[participantIndex].initialSignature = null;
-      meeting.participants[participantIndex].initialSignaturePositions = [];
-    }
-
+    meeting.participants[participantIndex].signature = signature;
+    meeting.participants[participantIndex].signaturePositions = signaturePositions || [];
     meeting.participants[participantIndex].isCurrent = false;
 
     let allSigned = false;
     let meetingStatus = meeting.status;
+    
+    // Check if all signers have signed
     const signers = meeting.participants.filter((p: any) => p.role === "Signer");
     allSigned = signers.every((s: any) => s.signed);
 
-    // ─── Email logic (unchanged) ──────────────────────────────────
     if (signingMode === "sequential" && !allSigned) {
+      // SEQUENTIAL MODE: Find next signer
       const currentSignerOrder = participant.order || 0;
       const nextSigner = signers.find(
         (p: any) => !p.signed && p.order > currentSignerOrder
       );
 
       if (nextSigner) {
+        // Set next signer as current
         const nextIndex = meeting.participants.findIndex(
           (p: any) => p.email === nextSigner.email
         );
         meeting.participants[nextIndex].isCurrent = true;
 
+        // Update meeting in database FIRST before sending email
         await db.collection("meetings").updateOne(
           { _id: new ObjectId(meetingId) },
           {
@@ -172,15 +152,18 @@ export async function POST(
           }
         );
 
-        // ─── Send email to next signer (unchanged) ──────────────────
+        // Fetch organizer details for email
         const organizer = await db.collection("users").findOne({
           _id: new ObjectId(meeting.organizerId),
         });
         const organizerName = organizer?.name || "Document Organizer";
         const organizerEmail = organizer?.email || "";
 
+        // Send email to next signer
         try {
           const transporter = createTransporter();
+          
+          // Generate signing token for the next participant
           const signingToken = jwt.sign(
             {
               type: "document-signing",
@@ -191,6 +174,7 @@ export async function POST(
             requireJwtSecret(),
             { expiresIn: "30d" }
           );
+          
           const signingUrl = `${process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"}/sign/${meetingId}?token=${signingToken}`;
           const previousSignerName = participant.name || user.name || "A participant";
 
@@ -221,8 +205,12 @@ export async function POST(
         }
       }
     } else if (signingMode === "parallel" || allSigned) {
+      // PARALLEL MODE: Just update meeting, no need to notify next signer
+      // OR Sequential mode and all signed
+      
       if (allSigned) {
         meetingStatus = "Completed";
+                // Update meeting status to Completed
         await db.collection("meetings").updateOne(
           { _id: new ObjectId(meetingId) },
           {
@@ -233,7 +221,7 @@ export async function POST(
             },
           }
         );
-        // ─── Send completion email to organizer (unchanged) ──────────
+                // Send completion email to organizer
         try {
           const organizer = await db.collection("users").findOne({
             _id: new ObjectId(meeting.organizerId),
@@ -269,6 +257,7 @@ export async function POST(
           console.error("Organizer notification error:", emailError);
         }
       } else {
+        // Not all signed yet, but no next signer - shouldn't happen but update DB just in case
         await db.collection("meetings").updateOne(
           { _id: new ObjectId(meetingId) },
           {

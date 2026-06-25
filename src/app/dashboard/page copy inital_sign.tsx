@@ -93,8 +93,7 @@ export default function Dashboard() {
           const data = await res.json();
           setUserName(data.name || data.email || "User");
           setSignatureImg(data.signature || null);
-          // ─── CHANGED: read `initialSignature` ──────────────────────
-          setInitialsImg(data.initialSignature || null);
+          setInitialsImg(data.initials || null);
           if (data.signature) localStorage.setItem("userSignature", data.signature);
         }
       } catch (err) {
@@ -171,7 +170,6 @@ export default function Dashboard() {
     return "unknown@acc.org.bd";
   };
 
-  // ─── UPDATED: handleFileChange ──────────────────────────────────
   const handleFileChange = async (
     e: React.ChangeEvent<HTMLInputElement>,
     type: "signature" | "initials"
@@ -181,25 +179,15 @@ export default function Dashboard() {
     const reader = new FileReader();
     reader.onloadend = async () => {
       const base64String = reader.result as string;
-      if (type === "signature") {
-        setSignatureImg(base64String);
-      } else {
-        setInitialsImg(base64String);
-      }
+      if (type === "signature") setSignatureImg(base64String);
+      else setInitialsImg(base64String);
       try {
         setIsUploading(true);
         const token = localStorage.getItem("token");
-        // ─── Build payload with correct field names ──────────────
-        const payload: any = {};
-        if (type === "signature") {
-          payload.signature = base64String;
-        } else {
-          payload.initialSignature = base64String; // ← was `initials`, now `initialSignature`
-        }
         await fetch("/api/user/update-signature", {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({ [type]: base64String }),
         });
       } catch (err) {
         console.error("Upload failed", err);
@@ -437,7 +425,6 @@ export default function Dashboard() {
                   <button className="text-xs text-indigo-600 group-hover:underline">Edit</button>
                 </div>
                 <div className="flex justify-center mt-2 min-h-[40px]">
-                  {/* This will show the uploaded initial signature (if any) */}
                   {initialsImg ? <img src={initialsImg} alt="Initials" className="max-h-10 object-contain" /> : <div className="flex flex-col items-center text-gray-400"><Upload size={16} /><span className="text-[10px] mt-1">Click to upload</span></div>}
                 </div>
               </div>

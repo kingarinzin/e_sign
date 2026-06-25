@@ -5,13 +5,15 @@ import { Rnd } from "react-rnd";
 import { X, Loader2 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 
+// Set worker outside to ensure it only runs once
 pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
+// Helper function to generate unique IDs (client-side only)
 function makeId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-type FieldType = "signature" | "name" | "date" | "initial";
+type FieldType = "signature" | "name" | "date";
 
 export interface Field {
   id: string;
@@ -21,7 +23,7 @@ export interface Field {
   yPct: number;
   wPct: number;
   hPct: number;
-  recipientName?: string;
+  recipientName?: string; // for name fields only
 }
 
 type PageRect = { w: number; h: number };
@@ -102,7 +104,6 @@ export default function PdfRenderer({
   setFields,
   draggingFieldType,
   userSignature,
-  userInitialSignature,
   userName,
   onNumPagesChange,
   participants,
@@ -116,7 +117,6 @@ export default function PdfRenderer({
   setFields: React.Dispatch<React.SetStateAction<Field[]>>;
   draggingFieldType: FieldType | null;
   userSignature: string | null;
-  userInitialSignature?: string | null;
   userName?: string;
   onNumPagesChange?: (numPages: number) => void;
   participants?: Array<{ name: string; email: string }>;
@@ -206,6 +206,13 @@ export default function PdfRenderer({
   if (loading) return <div className="flex items-center gap-3 p-10"><Loader2 className="animate-spin" /> Loading PDF...</div>;
   if (errMsg) return <div className="p-10 text-red-600">{errMsg}</div>;
 
+  const FIELD_PNG: Record<FieldType, string> = {
+    signature: "/field-templates/signature.png",
+    name: "/field-templates/name.png",
+    date: "/field-templates/date.png",
+  };
+
+  // Helper to get formatted current date
   const todayDate = new Date().toLocaleDateString();
 
   return (
@@ -227,19 +234,15 @@ export default function PdfRenderer({
               onRect={handlePageRect}
               onDrop={(pg, xPct, yPct) => {
                 if (!draggingFieldType) return;
-
+                
+                // Get the recipient name from selectedRecipient or use a default
                 const recipientName = selectedRecipient || participants?.[0]?.name || 'Recipient';
-
-                let defaults;
-                if (draggingFieldType === "signature") {
-                  defaults = { wPct: 0.28, hPct: 0.09 };
-                } else if (draggingFieldType === "initial") {
-                  defaults = { wPct: 0.22, hPct: 0.07 };
-                } else if (draggingFieldType === "name") {
-                  defaults = { wPct: 0.28, hPct: 0.07 };
-                } else { // date
-                  defaults = { wPct: 0.22, hPct: 0.07 };
-                }
+                
+                const defaults = draggingFieldType === "signature" 
+                  ? { wPct: 0.28, hPct: 0.09 } 
+                  : draggingFieldType === "name" 
+                  ? { wPct: 0.28, hPct: 0.07 } 
+                  : { wPct: 0.22, hPct: 0.07 };
 
                 const newField: Field = {
                   id: makeId(),
@@ -266,74 +269,20 @@ export default function PdfRenderer({
                   .filter((f) => f.page === pageNumber)
                   .map((field) => {
                     const rect = pxFromPct(field.page, field.xPct, field.yPct, field.wPct, field.hPct);
-
+                    
+                    // Logic to decide content: Image for signature, Text for others
                     const isSignature = field.type === "signature";
-                    const isInitial = field.type === "initial";
                     const isNameField = field.type === "name";
                     const isDateField = field.type === "date";
-
+                    
+                    // Display text based on field type
                     const todayDate = new Date().toLocaleDateString();
-                    const fieldText = isNameField
+                    const fieldText = isNameField 
                       ? (field.recipientName || "Full Name")
                       : isDateField
                       ? todayDate
-                      : isInitial
-                      ? (field.recipientName || "Initials")
                       : field.recipientName || "Signature";
 
-                    // ─── Signature / Initial: image or fallback text ───
-                    if (isSignature || isInitial) {
-                      let imgSrc: string | null = null;
-                      if (isSignature) {
-                        imgSrc = userSignature || null;      // no fallback image
-                      } else if (isInitial) {
-                        imgSrc = userInitialSignature || null; // no fallback image
-                      }
-
-                      return (
-                        <Rnd
-                          key={field.id}
-                          size={{ width: rect.w, height: rect.h }}
-                          position={{ x: rect.x, y: rect.y }}
-                          bounds="parent"
-                          className="pointer-events-auto"
-                          onDragStop={(_e, d) => {
-                            const pct = pctFromPx(field.page, d.x, d.y, rect.w, rect.h);
-                            if (pct) setFields((prev) => prev.map((f) => f.id === field.id ? { ...f, ...pct } : f));
-                          }}
-                          onResizeStop={(_e, _dir, ref, _delta, position) => {
-                            const pct = pctFromPx(field.page, position.x, position.y, ref.offsetWidth, ref.offsetHeight);
-                            if (pct) setFields((prev) => prev.map((f) => f.id === field.id ? { ...f, ...pct } : f));
-                          }}
-                        >
-                          <div className="w-full h-full group relative flex items-center justify-center border-2 border-dashed border-gray-400 hover:border-blue-500 rounded transition-colors bg-white/50">
-                            {imgSrc ? (
-                              <img
-                                src={imgSrc}
-                                alt={isInitial ? "initials" : "signature"}
-                                className="w-full h-full object-contain select-none"
-                                draggable={false}
-                              />
-                            ) : (
-                              <span
-                                className="text-gray-500 font-medium select-none"
-                                style={{ fontSize: `calc(${rect.h}px * 0.35)` }}
-                              >
-                                {isInitial ? "Initials" : "Signature"}
-                              </span>
-                            )}
-                            <button
-                              onClick={(e) => { e.stopPropagation(); removeField(field.id); }}
-                              className="absolute -top-2 -right-2 bg-white text-gray-400 hover:text-red-500 rounded-full shadow-md border p-1 opacity-0 group-hover:opacity-100 transition-opacity z-20 cursor-pointer"
-                            >
-                              <X size={12} />
-                            </button>
-                          </div>
-                        </Rnd>
-                      );
-                    }
-
-                    // ─── Name & Date: editable text (original logic) ───
                     return (
                       <Rnd
                         key={field.id}
@@ -351,46 +300,56 @@ export default function PdfRenderer({
                         }}
                       >
                         <div className="w-full h-full group relative flex items-center justify-center border-2 border-dashed border-gray-400 hover:border-blue-500 rounded transition-colors bg-white/50">
-                          <div className="w-full h-full flex items-center justify-center px-2">
-                            {editingFieldId === field.id ? (
-                              <input
-                                type="text"
-                                value={editingLabel}
-                                onChange={(e) => setEditingLabel(e.target.value)}
-                                onBlur={() => {
-                                  setFields((prev) => prev.map((f) =>
-                                    f.id === field.id ? { ...f, recipientName: editingLabel || field.recipientName } : f
-                                  ));
-                                  setEditingFieldId(null);
-                                }}
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") {
-                                    setFields((prev) => prev.map((f) =>
+                          {isSignature ? (
+                            <img
+                              src={userSignature ? userSignature : FIELD_PNG.signature}
+                              alt="signature"
+                              className="w-full h-full object-contain select-none"
+                              draggable={false}
+                            />
+                          ) : (
+                            <div className="w-full h-full flex items-center justify-center px-2">
+                              {editingFieldId === field.id ? (
+                                <input
+                                  type="text"
+                                  value={editingLabel}
+                                  onChange={(e) => setEditingLabel(e.target.value)}
+                                  onBlur={() => {
+                                    setFields((prev) => prev.map((f) => 
                                       f.id === field.id ? { ...f, recipientName: editingLabel || field.recipientName } : f
                                     ));
                                     setEditingFieldId(null);
-                                  }
-                                }}
-                                autoFocus
-                                className="w-full h-full text-center bg-white border-2 border-blue-500 rounded px-2 text-gray-900 font-medium outline-none"
-                                style={{ fontSize: `calc(${rect.h}px * 0.35)` }}
-                                onClick={(e) => e.stopPropagation()}
-                              />
-                            ) : (
-                              <span
-                                className="text-gray-900 font-medium whitespace-nowrap overflow-hidden select-none cursor-pointer"
-                                style={{ fontSize: `calc(${rect.h}px * 0.35)` }}
-                                onDoubleClick={(e) => {
-                                  e.stopPropagation();
-                                  setEditingFieldId(field.id);
-                                  setEditingLabel(field.recipientName || fieldText);
-                                }}
-                                title="Double-click to edit recipient name"
-                              >
-                                {fieldText}
-                              </span>
-                            )}
-                          </div>
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter") {
+                                      setFields((prev) => prev.map((f) => 
+                                        f.id === field.id ? { ...f, recipientName: editingLabel || field.recipientName } : f
+                                      ));
+                                      setEditingFieldId(null);
+                                    }
+                                  }}
+                                  autoFocus
+                                  className="w-full h-full text-center bg-white border-2 border-blue-500 rounded px-2 text-gray-900 font-medium outline-none"
+                                  style={{ fontSize: `calc(${rect.h}px * 0.35)` }}
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              ) : (
+                                <span 
+                                  className="text-gray-900 font-medium whitespace-nowrap overflow-hidden select-none cursor-pointer"
+                                  style={{ fontSize: `calc(${rect.h}px * 0.35)` }}
+                                  onDoubleClick={(e) => {
+                                    e.stopPropagation();
+                                    setEditingFieldId(field.id);
+                                    setEditingLabel(field.recipientName || fieldText);
+                                  }}
+                                  title="Double-click to edit recipient name"
+                                >
+                                  {fieldText}
+                                </span>
+                              )}
+                            </div>
+                          )}
+                          
                           <button
                             onClick={(e) => { e.stopPropagation(); removeField(field.id); }}
                             className="absolute -top-2 -right-2 bg-white text-gray-400 hover:text-red-500 rounded-full shadow-md border p-1 opacity-0 group-hover:opacity-100 transition-opacity z-20 cursor-pointer"

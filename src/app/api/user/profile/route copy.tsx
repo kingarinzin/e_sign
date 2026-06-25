@@ -21,13 +21,11 @@ export async function GET(req: Request) {
 
     const user = await db.collection("users").findOne(
       { _id: new ObjectId(decoded.id) },
-      { projection: { password: 0 } } // hide password
+      { projection: { password: 0 } } // Security: hide password
     );
 
-    // Return the user object, which now includes signature/initialSignature
     return NextResponse.json(user);
   } catch (error) {
-    console.error("Profile GET error:", error);
     return NextResponse.json({ error: "Fetch failed" }, { status: 500 });
   }
 }
@@ -46,23 +44,22 @@ export async function PUT(req: Request) {
       return NextResponse.json({ error: "Invalid token" }, { status: 401 });
     }
 
-    // ─── Accept signature fields ──────────────────────────────────
-    const { name, department, division, signature, initialSignature } = await req.json();
+    const { name, department, division } = await req.json();
 
-    if (name !== undefined && name.trim().length === 0) {
+    // Validate name
+    if (name && name.trim().length === 0) {
       return NextResponse.json({ error: "Name cannot be empty" }, { status: 400 });
     }
 
     const { db } = await connectToDatabase();
 
-    // Build update object dynamically
+    // Build update object
     const updateFields: any = {};
     if (name !== undefined) updateFields.name = name.trim();
     if (department !== undefined) updateFields.department = department || null;
     if (division !== undefined) updateFields.division = division || null;
-    if (signature !== undefined) updateFields.signature = signature || null;
-    if (initialSignature !== undefined) updateFields.initialSignature = initialSignature || null;
 
+    // Update user profile
     const result = await db.collection("users").updateOne(
       { _id: new ObjectId(decoded.id) },
       { $set: updateFields }
@@ -78,7 +75,7 @@ export async function PUT(req: Request) {
       { projection: { password: 0 } }
     );
 
-    return NextResponse.json({
+    return NextResponse.json({ 
       message: "Profile updated successfully",
       user: updatedUser
     });

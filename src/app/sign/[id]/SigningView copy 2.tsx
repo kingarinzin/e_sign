@@ -42,7 +42,7 @@ export default function SigningView({
     height: number;
   }>>([]);
 
-  // ─── Initial Signature ──────────────────────────────────────────
+  // ─── NEW: Initial Signature ──────────────────────────────────────
   const [userInitialSignature, setUserInitialSignature] = useState<string | null>(null);
   const [hasDrawnInitialSignature, setHasDrawnInitialSignature] = useState(false);
   const initialCanvasRef = useRef<HTMLCanvasElement>(null);
@@ -55,7 +55,7 @@ export default function SigningView({
     height: number;
   }>>([]);
 
-  // ─── Org Badges ──────────────────────────────────────────────────
+  // ─── Existing: Org Badges ────────────────────────────────────────
   const [freeformOrgBadges, setFreeformOrgBadges] = useState<Array<{
     id: string;
     page: number;
@@ -112,6 +112,7 @@ export default function SigningView({
           setUserSignature(data.signature);
           setHasDrawnSignature(true);
         }
+        // ─── NEW: load initial signature ───
         if (data.initialSignature) {
           setUserInitialSignature(data.initialSignature);
           setHasDrawnInitialSignature(true);
@@ -183,7 +184,7 @@ export default function SigningView({
     });
   };
 
-  // ─── Drawing Functions for Initial Signature ────────────────────
+  // ─── NEW: Drawing Functions for Initial Signature ────────────────
   const startInitialDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     const canvas = initialCanvasRef.current;
@@ -245,33 +246,6 @@ export default function SigningView({
     });
   };
 
-  // ─── Apply Initials to All Pages ────────────────────────────────
-  const applyInitialsToAllPages = () => {
-    if (freeformInitialSignatures.length === 0) {
-      alert("Please place an initial signature first.");
-      return;
-    }
-
-    const template = freeformInitialSignatures[0];
-    const allPageNumbers = Array.from({ length: numPages }, (_, i) => i + 1);
-    const existingPages = new Set(freeformInitialSignatures.map(s => s.page));
-
-    const newEntries = allPageNumbers
-      .filter(page => !existingPages.has(page))
-      .map(page => ({
-        ...template,
-        id: makeId(),
-        page,
-      }));
-
-    if (newEntries.length === 0) {
-      alert("All pages already have an initial signature.");
-      return;
-    }
-
-    setFreeformInitialSignatures(prev => [...prev, ...newEntries]);
-  };
-
   // ─── Drag Handlers ───────────────────────────────────────────────
   const handleDragStart = (e: React.DragEvent) => {
     if (!userSignature) {
@@ -285,6 +259,7 @@ export default function SigningView({
     e.dataTransfer.setData("text/plain", "signature");
   };
 
+  // ─── NEW: Drag handler for initial signature ────────────────────
   const handleInitialDragStart = (e: React.DragEvent) => {
     if (!userInitialSignature) {
       e.preventDefault();
@@ -319,13 +294,14 @@ export default function SigningView({
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
+    // ─── NEW: handle initial signature drop ──────────────────────
     if (dragData === "initial" && userInitialSignature) {
       setFreeformInitialSignatures(prev => [
         ...prev,
         {
           id: makeId(),
           page: pageNum,
-          x: x - 50,
+          x: x - 50, // smaller size
           y: y - 20,
           width: 100,
           height: 40,
@@ -387,9 +363,11 @@ export default function SigningView({
     setSignatureError("");
     setValidationError(null);
 
+    // Determine if we have a full signature image (saved or drawn)
     const finalFullSignature = userSignature || (hasDrawnSignature ? canvasRef.current?.toDataURL("image/png") : null);
     const finalInitialSignature = userInitialSignature || (hasDrawnInitialSignature ? initialCanvasRef.current?.toDataURL("image/png") : null);
 
+    // Check if at least one signature is placed on the document (full or initial)
     const hasFullPlaced = freeformSignatures.length > 0;
     const hasInitialPlaced = freeformInitialSignatures.length > 0;
 
@@ -400,6 +378,7 @@ export default function SigningView({
       return;
     }
 
+    // Must have at least one signature image (either full or initial)
     if (!finalFullSignature && !finalInitialSignature) {
       setValidationError("Please create or draw a signature (full or initial) before signing.");
       setSignatureError("Please create your signature before signing");
@@ -407,6 +386,7 @@ export default function SigningView({
       return;
     }
 
+    // Save any unsaved drawn signatures
     if (hasDrawnSignature && !userSignature) {
       await saveSignature();
     }
@@ -425,9 +405,9 @@ export default function SigningView({
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          signature: finalFullSignature,
+          signature: finalFullSignature,           // may be null
           signaturePositions: freeformSignatures,
-          initialSignature: finalInitialSignature,
+          initialSignature: finalInitialSignature, // may be null
           initialSignaturePositions: freeformInitialSignatures,
         }),
       });
@@ -455,7 +435,7 @@ export default function SigningView({
     );
   }
 
-  // ─── Existing: myFields, previousSignatures ─────────────────────
+  // ─── Existing: myFields, previousSignatures (unchanged) ─────────
   const myFields = meeting.fields?.filter((f: any) => {
     const recipientName = f.recipientName?.toLowerCase();
     const userName = currentUser.name?.toLowerCase();
@@ -510,7 +490,8 @@ export default function SigningView({
         </div>
       </header>
 
-      {/* Error Message */}
+      {/* Error Message (unchanged) */}
+
       {signatureError && (
         <div className="bg-red-50 border-l-4 border-red-500 px-8 py-4 z-40">
           <div className="max-w-6xl mx-auto">
@@ -537,7 +518,7 @@ export default function SigningView({
       )}
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Left: Page Thumbnails */}
+        {/* Left: Page Thumbnails (unchanged) */}
         <aside className="w-48 bg-white border-r p-3 overflow-y-auto z-40 shadow-sm flex-shrink-0">
           <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
             Pages
@@ -630,9 +611,9 @@ export default function SigningView({
                           </div>
                         ))}
 
-                      {/* ─── Name & Date fields ──────────────────────── */}
+                      {/* ─── Name & Date fields (unchanged) ─── */}
                       {meeting.fields
-                        ?.filter((f: any) => f.page === pageNum && f.type !== 'signature' && f.type !== 'initial')
+                        ?.filter((f: any) => f.page === pageNum && f.type !== 'signature')
                         .map((field: any, idx: number) => {
                           const isMyField = myFields.some((mf: any) => mf.id === field.id);
                           const fieldRecipient = field.recipientName?.toLowerCase() || '';
@@ -677,7 +658,7 @@ export default function SigningView({
                           );
                         })}
 
-                      {/* ─── User's full signatures placed ────────── */}
+                      {/* ─── User's full signatures placed ─── */}
                       {freeformSignatures
                         .filter(sig => sig.page === pageNum)
                         .map((sig) => (
@@ -721,7 +702,7 @@ export default function SigningView({
                           </Rnd>
                         ))}
 
-                      {/* ─── User's initial signatures placed ────── */}
+                      {/* ─── NEW: User's initial signatures placed ─── */}
                       {freeformInitialSignatures
                         .filter(sig => sig.page === pageNum)
                         .map((sig) => (
@@ -765,7 +746,7 @@ export default function SigningView({
                           </Rnd>
                         ))}
 
-                      {/* ─── Department/Division badges ────────────── */}
+                      {/* ─── Department/Division badges (unchanged) ─── */}
                       {freeformOrgBadges
                         .filter(badge => badge.page === pageNum)
                         .map((badge) => (
@@ -816,7 +797,7 @@ export default function SigningView({
           </div>
         </main>
 
-        {/* ─── Right Sidebar ─────────────────────────────────────────── */}
+        {/* ─── Right Sidebar: Updated ─────────────────────────────── */}
         <aside className="w-80 bg-white border-l p-6 flex flex-col gap-6 overflow-y-auto shadow-lg flex-shrink-0">
           {/* ─── SECTION: Full Signature ─── */}
           <div>
@@ -879,7 +860,7 @@ export default function SigningView({
             )}
           </div>
 
-          {/* ─── SECTION: Initial Signature ────────────────────────── */}
+          {/* ─── NEW: SECTION: Initial Signature ──────────────────── */}
           <div className="border-t pt-4">
             <h3 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
               <PenTool className="w-4 h-4 text-purple-500" />
@@ -938,19 +919,9 @@ export default function SigningView({
                 </div>
               </div>
             )}
-
-            {/* ─── NEW BUTTON ───────────────────────────────────────── */}
-            {freeformInitialSignatures.length > 0 && (
-              <button
-                onClick={applyInitialsToAllPages}
-                className="mt-3 w-full bg-purple-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-purple-700 transition"
-              >
-                Apply Initials to All Pages
-              </button>
-            )}
           </div>
 
-          {/* ─── Signing As ─────────────────────────────────────────── */}
+          {/* ─── Signing As (unchanged) ────────────────────────────── */}
           <div className="border-t pt-6">
             <h3 className="text-sm font-bold text-gray-700 mb-3">Signing As</h3>
             <div className="space-y-3 text-sm bg-gray-50 rounded-lg p-4">
@@ -1011,7 +982,7 @@ export default function SigningView({
             </div>
           </div>
 
-          {/* ─── Document Info ──────────────────────────────────────── */}
+          {/* ─── Document Info (unchanged) ─────────────────────────── */}
           <div className="border-t pt-6">
             <h3 className="text-sm font-bold text-gray-700 mb-3">Document Info</h3>
             <div className="space-y-2 text-sm">
@@ -1022,7 +993,7 @@ export default function SigningView({
             </div>
           </div>
 
-          {/* ─── Ready to Sign ─────────────────────────────────────── */}
+          {/* ─── Ready to Sign indicator (updated) ────────────────── */}
           {(userSignature || hasDrawnSignature || userInitialSignature || hasDrawnInitialSignature) && (
             <div className="mt-auto bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
               <CheckCircle2 className="w-5 h-5 text-green-600 shrink-0 mt-0.5" />
@@ -1037,7 +1008,7 @@ export default function SigningView({
         </aside>
       </div>
 
-      {/* ─── Success Modal ─────────────────────────────────────────── */}
+      {/* ─── Success Modal (unchanged) ────────────────────────────── */}
       <SuccessModal
         isOpen={showSuccessModal}
         title="Document Signed!"
@@ -1049,7 +1020,7 @@ export default function SigningView({
         buttonText="Back to Dashboard"
       />
 
-      {/* ─── Validation Error Modal ────────────────────────────────── */}
+      {/* ─── Validation Error Modal (unchanged) ───────────────────── */}
       {validationError && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-50">
           <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full mx-4 p-6 animate-in fade-in zoom-in duration-200">

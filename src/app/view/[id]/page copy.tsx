@@ -25,7 +25,7 @@ if (typeof window !== "undefined") {
 export default function ViewDocumentPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-
+  
   const [loading, setLoading] = useState(true);
   const [meeting, setMeeting] = useState<any>(null);
   const [blobUrl, setBlobUrl] = useState("");
@@ -41,6 +41,7 @@ export default function ViewDocumentPage() {
           return;
         }
 
+        // Get meeting details
         const meetingRes = await fetch(`/api/meetings/${id}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -55,6 +56,7 @@ export default function ViewDocumentPage() {
         const mtg = meetingData.meeting || meetingData;
         setMeeting(mtg);
 
+        // Get PDF
         const pdfRes = await fetch(`/api/meetings/${id}/pdf`, {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },
@@ -66,7 +68,7 @@ export default function ViewDocumentPage() {
         } else {
           const errorData = await pdfRes.json().catch(() => ({}));
           if (errorData.error?.includes("missing")) {
-            setError("The PDF file for this document is missing from the server.");
+            setError("The PDF file for this document is missing from the server. The document record exists but the file has been deleted or lost.");
           } else {
             setError("Failed to load PDF file");
           }
@@ -113,20 +115,8 @@ export default function ViewDocumentPage() {
     }
   };
 
-  // ─── Collect all full signatures ──────────────────────────────
+  // Collect all signatures from signed participants
   const allSignatures: Array<{
-    id: string;
-    page: number;
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    signature: string;
-    signerName: string;
-  }> = [];
-
-  // ─── NEW: Collect all initial signatures ──────────────────────
-  const allInitialSignatures: Array<{
     id: string;
     page: number;
     x: number;
@@ -141,22 +131,11 @@ export default function ViewDocumentPage() {
     meeting.participants
       .filter((p: any) => p.signed)
       .forEach((p: any) => {
-        // Full signatures
         if (p.signaturePositions && Array.isArray(p.signaturePositions)) {
           p.signaturePositions.forEach((pos: any) => {
             allSignatures.push({
               ...pos,
               signature: p.signature,
-              signerName: p.name || p.email,
-            });
-          });
-        }
-        // ─── NEW: Initial signatures ────────────────────────────
-        if (p.initialSignaturePositions && Array.isArray(p.initialSignaturePositions)) {
-          p.initialSignaturePositions.forEach((pos: any) => {
-            allInitialSignatures.push({
-              ...pos,
-              signature: p.initialSignature,
               signerName: p.name || p.email,
             });
           });
@@ -202,7 +181,8 @@ export default function ViewDocumentPage() {
             <h2 className="text-xl font-bold text-gray-900 mb-2">PDF File Not Found</h2>
             <p className="text-red-600 text-sm mb-4">{error}</p>
             <p className="text-gray-600 text-sm mb-6">
-              The document metadata exists, but the PDF file has been removed from the server.
+              The document metadata exists in the database, but the PDF file has been removed from the server. 
+              This may have happened due to file cleanup or migration.
             </p>
             <button
               onClick={() => router.push("/dashboard")}
@@ -265,8 +245,8 @@ export default function ViewDocumentPage() {
                       renderTextLayer={false}
                       renderAnnotationLayer={false}
                     />
-
-                    {/* ─── Show placed fields ──────────────────────────── */}
+                    
+                    {/* Show all fields with their data */}
                     {meeting?.fields && Array.isArray(meeting.fields) && meeting.fields
                       .filter((f: any) => f.page === pageNum)
                       .map((field: any, idx: number) => {
@@ -290,33 +270,25 @@ export default function ViewDocumentPage() {
                               height: `${field.hPct * 100}%`,
                             }}
                           >
-                            {/* ─── Full signature field ──────────────────── */}
+                            {/* Show signature if field type is signature */}
                             {field.type === 'signature' && ownerSigned && fieldOwner?.signature && (
                               <div className="w-full h-full flex items-center justify-center p-1">
-                                <img
-                                  src={fieldOwner.signature}
-                                  alt="signature"
+                                <img 
+                                  src={fieldOwner.signature} 
+                                  alt="signature" 
                                   className="max-w-full max-h-full object-contain"
                                 />
                               </div>
                             )}
-                            {/* ─── NEW: Initial signature field ──────────── */}
-                            {field.type === 'initial' && ownerSigned && fieldOwner?.initialSignature && (
-                              <div className="w-full h-full flex items-center justify-center p-1">
-                                <img
-                                  src={fieldOwner.initialSignature}
-                                  alt="initial signature"
-                                  className="max-w-full max-h-full object-contain"
-                                />
-                              </div>
-                            )}
-                            {/* ─── Name field ────────────────────────────── */}
+                            
+                            {/* Show name if field type is name */}
                             {field.type === 'name' && ownerSigned && fieldOwner?.name && (
                               <div className="flex items-center justify-center h-full text-sm font-semibold text-gray-800">
                                 {fieldOwner.name}
                               </div>
                             )}
-                            {/* ─── Date field ────────────────────────────── */}
+                            
+                            {/* Show date if field type is date */}
                             {field.type === 'date' && ownerSigned && fieldOwner?.signedAt && (
                               <div className="flex items-center justify-center h-full text-xs text-gray-700">
                                 {new Date(fieldOwner.signedAt).toLocaleDateString()}
@@ -325,8 +297,8 @@ export default function ViewDocumentPage() {
                           </div>
                         );
                       })}
-
-                    {/* ─── Show freeform full signatures ────────────── */}
+                    
+                    {/* Show all freeform signatures */}
                     {allSignatures
                       .filter(sig => sig.page === pageNum)
                       .map((sig) => (
@@ -340,31 +312,9 @@ export default function ViewDocumentPage() {
                             height: `${sig.height}px`,
                           }}
                         >
-                          <img
-                            src={sig.signature}
-                            alt="signature"
-                            className="w-full h-full object-contain"
-                          />
-                        </div>
-                      ))}
-
-                    {/* ─── NEW: Show freeform initial signatures ────── */}
-                    {allInitialSignatures
-                      .filter(sig => sig.page === pageNum)
-                      .map((sig) => (
-                        <div
-                          key={sig.id}
-                          className="absolute"
-                          style={{
-                            left: `${sig.x}px`,
-                            top: `${sig.y}px`,
-                            width: `${sig.width}px`,
-                            height: `${sig.height}px`,
-                          }}
-                        >
-                          <img
-                            src={sig.signature}
-                            alt="initial signature"
+                          <img 
+                            src={sig.signature} 
+                            alt="signature" 
                             className="w-full h-full object-contain"
                           />
                         </div>

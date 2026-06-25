@@ -19,22 +19,22 @@ import {
 } from "lucide-react";
 import SuccessModal from "@/components/SuccessModal";
 
-type FieldType = "signature" | "name" | "date";
+// ─── ADDED "initial" ──────────────────────────────────────────────
+type FieldType = "signature" | "name" | "date" | "initial";
 
 interface Field {
-  id: string; // client-only id (db ids are handled by API replace strategy)
+  id: string;
   type: FieldType;
-  page: number; // 1-based
-  xPct: number; // 0..1
-  yPct: number; // 0..1
-  wPct: number; // 0..1
-  hPct: number; // 0..1
-  recipientName?: string; // for name fields only
+  page: number;
+  xPct: number;
+  yPct: number;
+  wPct: number;
+  hPct: number;
+  recipientName?: string;
 }
 
 type PageRect = { w: number; h: number };
 
-// Helper function to generate unique IDs (client-side only)
 function makeId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
@@ -51,7 +51,6 @@ export default function PreparePage() {
 
   const [numPages, setNumPages] = useState<number>(0);
 
-  // Track each page container size for px conversion
   const [pageRects, setPageRects] = useState<Record<number, PageRect>>({});
   const [placingType, setPlacingType] = useState<FieldType | null>(null);
   const [draggingFieldType, setDraggingFieldType] = useState<FieldType | null>(null);
@@ -60,7 +59,11 @@ export default function PreparePage() {
   const [firstRecipient, setFirstRecipient] = useState("");
   const [signingMode, setSigningMode] = useState<"sequential" | "parallel">("sequential");
 
-  // --- Fetch meeting ---
+  // ─── State for both signatures ──────────────────────────────────
+  const [userSignature, setUserSignature] = useState<string | null>(null);
+  const [userInitialSignature, setUserInitialSignature] = useState<string | null>(null);
+
+  // ─── Fetch meeting ──────────────────────────────────────────────
   useEffect(() => {
     async function fetchMeeting() {
       try {
@@ -72,9 +75,7 @@ export default function PreparePage() {
         if (res.ok) {
           const meetingData = data.meeting || data;
           setMeeting(meetingData);
-          // Set signing mode from meeting data, default to sequential
           setSigningMode(meetingData?.signingMode || "sequential");
-          // Auto-select first participant
           if (meetingData?.participants?.length > 0 && !selectedRecipient) {
             setSelectedRecipient(meetingData.participants[0].name);
           }
@@ -88,7 +89,7 @@ export default function PreparePage() {
     if (id) fetchMeeting();
   }, [id]);
 
-  // --- Fetch fields ---
+  // ─── Fetch fields ───────────────────────────────────────────────
   useEffect(() => {
     async function fetchFields() {
       try {
@@ -106,51 +107,37 @@ export default function PreparePage() {
   }, [id]);
 
   const tokenHeader = useMemo(() => {
-    const token =
-      typeof window !== "undefined" ? localStorage.getItem("token") : null;
+    const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
     return token ? { Authorization: `Bearer ${token}` } : {};
   }, []);
 
-  // --- Fetch fields ---
-  // --- Fetch fields ---
-  useEffect(() => {
-    async function fetchFields() {
-      try {
-        const token = localStorage.getItem("token");
-        const res = await fetch(`/api/meetings/${id}/fields`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const data = await res.json();
-        if (res.ok) setFields(Array.isArray(data.fields) ? data.fields : []);
-      } catch (err) {
-        console.error("Error fetching fields:", err);
-      }
-    }
-    if (id) fetchFields();
-  }, [id]);
-
-  // Load user signature from API
-  const [userSignature, setUserSignature] = useState<string | null>(null);
-
+  // ─── Load both full and initial signatures ─────────────────────
   useEffect(() => {
     async function loadUserSignature() {
-    // Try to get from localStorage first (fast)
-    const localSig = localStorage.getItem("userSignature");
-    if (localSig) setUserSignature(localSig);
+      // Try localStorage first
+      const localSig = localStorage.getItem("userSignature");
+      if (localSig) setUserSignature(localSig);
+      const localInit = localStorage.getItem("userInitialSignature");
+      if (localInit) setUserInitialSignature(localInit);
 
-    // Then fallback/sync with API
-    const token = localStorage.getItem("token");
-    const res = await fetch("/api/user/profile", {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (res.ok) {
-      const data = await res.json();
-      setUserSignature(data.signature);
-      if (data.signature) localStorage.setItem("userSignature", data.signature);
+      const token = localStorage.getItem("token");
+      const res = await fetch("/api/user/profile", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.signature) {
+          setUserSignature(data.signature);
+          localStorage.setItem("userSignature", data.signature);
+        }
+        if (data.initialSignature) {
+          setUserInitialSignature(data.initialSignature);
+          localStorage.setItem("userInitialSignature", data.initialSignature);
+        }
+      }
     }
-  }
-  loadUserSignature();
-}, []);
+    loadUserSignature();
+  }, []);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -160,13 +147,13 @@ export default function PreparePage() {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
-    const removeField = (fieldId: string) => {
+  const removeField = (fieldId: string) => {
     setFields((prev) => prev.filter((f) => f.id !== fieldId));
   };
 
   const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
 
-    const pxFromPct = (
+  const pxFromPct = (
     page: number,
     xPct: number,
     yPct: number,
@@ -245,7 +232,6 @@ export default function PreparePage() {
 
     setIsSaving(true);
     try {
-      // Send the document to recipients
       const res = await fetch(`/api/meetings/${id}/send`, {
         method: "POST",
         headers: {
@@ -283,8 +269,7 @@ export default function PreparePage() {
     );
   }
 
-  const token =
-    typeof window !== "undefined" ? localStorage.getItem("token") : null;
+  const token = typeof window !== "undefined" ? localStorage.getItem("token") : null;
   const storedName =
     meeting?.storedFileName ||
     meeting?.originalFileName ||
@@ -292,12 +277,10 @@ export default function PreparePage() {
     "";
 
   const isPdf = storedName.toLowerCase().endsWith(".pdf");
-
   const fileUrl = id ? `/api/meetings/${id}/pdf` : "";
 
   return (
     <div className="h-screen flex flex-col bg-[#f0f2f5] overflow-hidden">
-      {/* Top Navbar */}
       <header className="bg-white border-b px-8 py-3 flex justify-between items-center shadow-sm z-50">
         <div className="flex items-center gap-4">
           <button
@@ -336,26 +319,24 @@ export default function PreparePage() {
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Left: Page Thumbnails */}
         <aside className="w-48 bg-white border-r p-3 overflow-y-auto z-40 shadow-sm">
           <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
             Pages
           </h3>
           {numPages > 0 && (
-            <PrepareThumbnails 
+            <PrepareThumbnails
               meetingId={id}
               numPages={numPages}
               onPageClick={(pageNumber) => {
                 const pageElement = document.getElementById(`pdf-page-${pageNumber}`);
                 if (pageElement) {
-                  pageElement.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  pageElement.scrollIntoView({ behavior: "smooth", block: "start" });
                 }
               }}
             />
           )}
         </aside>
 
-        {/* Center: Main Document Viewer */}
         <main className="flex-1 overflow-auto p-6 flex justify-center bg-[#e2e8f0] relative">
           <div className="max-w-3xl w-full">
             {!fileUrl ? (
@@ -371,6 +352,7 @@ export default function PreparePage() {
                 setFields={setFields}
                 draggingFieldType={draggingFieldType}
                 userSignature={userSignature}
+                userInitialSignature={userInitialSignature} // ← NEW PROP
                 onNumPagesChange={setNumPages}
                 participants={meeting?.participants}
                 selectedRecipient={selectedRecipient}
@@ -380,13 +362,13 @@ export default function PreparePage() {
           </div>
         </main>
 
-        {/* Right: Draggable Fields */}
         <aside className="w-64 bg-white border-l p-4 flex flex-col gap-4 z-40 shadow-sm overflow-y-auto">
           <div>
             <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
               Draggable Fields
             </h3>
             <div className="flex flex-col space-y-2">
+              {/* Signature */}
               <div
                 draggable
                 onDragStart={(e) => {
@@ -398,6 +380,21 @@ export default function PreparePage() {
               >
                 📝 Signature
               </div>
+
+              {/* ─── NEW: Initials draggable field ────────────────── */}
+              <div
+                draggable
+                onDragStart={(e) => {
+                  setDraggingFieldType("initial");
+                  e.dataTransfer.effectAllowed = "copy";
+                }}
+                onDragEnd={() => setDraggingFieldType(null)}
+                className="px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded hover:bg-slate-50 hover:border-blue-500 hover:text-blue-600 transition-all cursor-move shadow-sm"
+              >
+                ✍️ Initials
+              </div>
+
+              {/* Full Name */}
               <div
                 draggable
                 onDragStart={(e) => {
@@ -409,6 +406,8 @@ export default function PreparePage() {
               >
                 👤 Full Name
               </div>
+
+              {/* Date */}
               <div
                 draggable
                 onDragStart={(e) => {
@@ -434,13 +433,17 @@ export default function PreparePage() {
                   onClick={() => setSelectedRecipient(p.name)}
                   className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition-all ${
                     selectedRecipient === p.name
-                      ? 'bg-blue-100 border-blue-500 ring-2 ring-blue-300'
-                      : 'bg-gray-50 border-gray-100 hover:bg-gray-100 hover:border-gray-300'
+                      ? "bg-blue-100 border-blue-500 ring-2 ring-blue-300"
+                      : "bg-gray-50 border-gray-100 hover:bg-gray-100 hover:border-gray-300"
                   }`}
                 >
-                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold shadow-sm ${
-                    selectedRecipient === p.name ? 'bg-blue-600 text-white' : 'bg-indigo-600 text-white'
-                  }`}>
+                  <div
+                    className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold shadow-sm ${
+                      selectedRecipient === p.name
+                        ? "bg-blue-600 text-white"
+                        : "bg-indigo-600 text-white"
+                    }`}
+                  >
                     {p?.name?.[0]?.toUpperCase?.() || "?"}
                   </div>
                   <div className="overflow-hidden flex-1">
@@ -466,7 +469,6 @@ export default function PreparePage() {
         </aside>
       </div>
 
-      {/* Success Modal */}
       <SuccessModal
         isOpen={showSuccessModal}
         title="Document Sent!"
@@ -480,5 +482,3 @@ export default function PreparePage() {
     </div>
   );
 }
-
-

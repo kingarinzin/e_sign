@@ -6,23 +6,23 @@ import { getUserIdVariants } from "@/lib/auth-helpers";
 
 export const runtime = "nodejs";
 
-// ─── ADDED "initial" ──────────────────────────────────────────────
-type FieldType = "signature" | "name" | "date" | "initial";
+type FieldType = "signature" | "name" | "date";
 
 type Field = {
-  id: string;
+  id: string;           // keep id so UI can remove/update reliably
   type: FieldType;
-  page: number;
-  xPct: number;
-  yPct: number;
-  wPct: number;
-  hPct: number;
-  recipientName?: string;
+  page: number;         // 1-based page index
+  xPct: number;         // 0..1
+  yPct: number;         // 0..1
+  wPct: number;         // 0..1
+  hPct: number;         // 0..1
+  recipientName?: string; // Name of recipient this field is assigned to
 };
 
 function requireUser(req: Request) {
   const authHeader = req.headers.get("authorization");
   if (!authHeader?.startsWith("Bearer ")) return null;
+
   const token = authHeader.split(" ")[1];
   try {
     return jwt.verify(token, process.env.JWT_SECRET!) as any;
@@ -34,11 +34,12 @@ function requireUser(req: Request) {
 const clamp01 = (n: number) => Math.min(1, Math.max(0, n));
 
 function isFieldType(t: any): t is FieldType {
-  return t === "signature" || t === "name" || t === "date" || t === "initial";
+  return t === "signature" || t === "name" || t === "date";
 }
 
 function normalizeField(raw: any): Field | null {
   if (!raw || typeof raw !== "object") return null;
+
   const id = typeof raw.id === "string" && raw.id.length > 0 ? raw.id : crypto.randomUUID();
 
   const page = Number(raw.page);
@@ -49,8 +50,10 @@ function normalizeField(raw: any): Field | null {
 
   if (!isFieldType(raw.type)) return null;
   if (!Number.isFinite(page) || page < 1) return null;
+
   if (![xPct, yPct, wPct, hPct].every((v) => Number.isFinite(v))) return null;
 
+  // Clamp to sane bounds
   return {
     id,
     type: raw.type,

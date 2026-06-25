@@ -13,6 +13,7 @@ function makeId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+
 export default function SigningView({
   meeting,
   meetingId,
@@ -27,12 +28,11 @@ export default function SigningView({
   const [blobUrl, setBlobUrl] = useState("");
   const [loading, setLoading] = useState(true);
   const [signing, setSigning] = useState(false);
-
-  // ─── Full Signature ──────────────────────────────────────────────
   const [userSignature, setUserSignature] = useState<string | null>(null);
   const [hasDrawnSignature, setHasDrawnSignature] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
+  const [pageRects, setPageRects] = useState<Record<number, { width: number; height: number }>>({});
   const [freeformSignatures, setFreeformSignatures] = useState<Array<{
     id: string;
     page: number;
@@ -41,21 +41,6 @@ export default function SigningView({
     width: number;
     height: number;
   }>>([]);
-
-  // ─── Initial Signature ──────────────────────────────────────────
-  const [userInitialSignature, setUserInitialSignature] = useState<string | null>(null);
-  const [hasDrawnInitialSignature, setHasDrawnInitialSignature] = useState(false);
-  const initialCanvasRef = useRef<HTMLCanvasElement>(null);
-  const [freeformInitialSignatures, setFreeformInitialSignatures] = useState<Array<{
-    id: string;
-    page: number;
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-  }>>([]);
-
-  // ─── Org Badges ──────────────────────────────────────────────────
   const [freeformOrgBadges, setFreeformOrgBadges] = useState<Array<{
     id: string;
     page: number;
@@ -66,16 +51,14 @@ export default function SigningView({
     type: 'department' | 'division';
     text: string;
   }>>([]);
-
   const [isDraggingSignature, setIsDraggingSignature] = useState(false);
   const [draggingItemType, setDraggingItemType] = useState<string | null>(null);
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [signSuccessMessage, setSignSuccessMessage] = useState("");
   const [signatureError, setSignatureError] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
-  const [pageRects, setPageRects] = useState<Record<number, { width: number; height: number }>>({});
 
-  // ─── Fetch PDF ────────────────────────────────────────────────────
+  // Fetch PDF
   useEffect(() => {
     async function fetchPdf() {
       try {
@@ -99,9 +82,9 @@ export default function SigningView({
     fetchPdf();
   }, [meetingId]);
 
-  // ─── Load user signatures from profile ──────────────────────────
+  // Load user's signature if exists
   useEffect(() => {
-    async function loadSignatures() {
+    async function loadSignature() {
       const token = localStorage.getItem("token");
       const res = await fetch("/api/user/profile", {
         headers: { Authorization: `Bearer ${token}` },
@@ -112,25 +95,24 @@ export default function SigningView({
           setUserSignature(data.signature);
           setHasDrawnSignature(true);
         }
-        if (data.initialSignature) {
-          setUserInitialSignature(data.initialSignature);
-          setHasDrawnInitialSignature(true);
-        }
       }
     }
-    loadSignatures();
+    loadSignature();
   }, []);
 
-  // ─── Canvas Drawing Functions (Full Signature) ──────────────────
+  // Canvas drawing functions
   const startDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
     e.preventDefault();
     const canvas = canvasRef.current;
     if (!canvas) return;
+    
     const rect = canvas.getBoundingClientRect();
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+
     setIsDrawing(true);
     ctx.beginPath();
     ctx.moveTo(clientX - rect.left, clientY - rect.top);
@@ -139,13 +121,17 @@ export default function SigningView({
   const draw = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
     if (!isDrawing) return;
     e.preventDefault();
+    
     const canvas = canvasRef.current;
     if (!canvas) return;
+    
     const rect = canvas.getBoundingClientRect();
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+
     const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
     const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
+
     ctx.lineTo(clientX - rect.left, clientY - rect.top);
     ctx.strokeStyle = "#000";
     ctx.lineWidth = 2;
@@ -161,8 +147,10 @@ export default function SigningView({
   const clearSignature = () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+    
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+    
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     setHasDrawnSignature(false);
   };
@@ -170,8 +158,11 @@ export default function SigningView({
   const saveSignature = async () => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
     const dataUrl = canvas.toDataURL("image/png");
     setUserSignature(dataUrl);
+
+    // Save to user profile
     const token = localStorage.getItem("token");
     await fetch("/api/user/update-signature", {
       method: "POST",
@@ -183,96 +174,114 @@ export default function SigningView({
     });
   };
 
-  // ─── Drawing Functions for Initial Signature ────────────────────
-  const startInitialDrawing = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    e.preventDefault();
-    const canvas = initialCanvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
-    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
-    setIsDrawing(true);
-    ctx.beginPath();
-    ctx.moveTo(clientX - rect.left, clientY - rect.top);
-  };
+  const handleSign = async () => {
+    setSignatureError(""); // Clear any previous errors
+    setValidationError(null); // Clear validation errors
 
-  const drawInitial = (e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) => {
-    if (!isDrawing) return;
-    e.preventDefault();
-    const canvas = initialCanvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const clientX = 'touches' in e ? e.touches[0].clientX : e.clientX;
-    const clientY = 'touches' in e ? e.touches[0].clientY : e.clientY;
-    ctx.lineTo(clientX - rect.left, clientY - rect.top);
-    ctx.strokeStyle = "#000";
-    ctx.lineWidth = 2;
-    ctx.lineCap = "round";
-    ctx.stroke();
-    setHasDrawnInitialSignature(true);
-  };
-
-  const stopInitialDrawing = () => {
-    setIsDrawing(false);
-  };
-
-  const clearInitialSignature = () => {
-    const canvas = initialCanvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    setHasDrawnInitialSignature(false);
-  };
-
-  const saveInitialSignature = async () => {
-    const canvas = initialCanvasRef.current;
-    if (!canvas) return;
-    const dataUrl = canvas.toDataURL("image/png");
-    setUserInitialSignature(dataUrl);
-    const token = localStorage.getItem("token");
-    await fetch("/api/user/update-signature", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ initialSignature: dataUrl }),
-    });
-  };
-
-  // ─── Apply Initials to All Pages ────────────────────────────────
-  const applyInitialsToAllPages = () => {
-    if (freeformInitialSignatures.length === 0) {
-      alert("Please place an initial signature first.");
+    // Strong validation - must have signature created first
+    const finalSignature = userSignature || (hasDrawnSignature ? canvasRef.current?.toDataURL("image/png") : null);
+    
+    if (!finalSignature) {
+      setValidationError("Please create or draw your signature in the right sidebar before signing the document.");
+      setSignatureError("Please create your signature before signing the document");
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
 
-    const template = freeformInitialSignatures[0];
-    const allPageNumbers = Array.from({ length: numPages }, (_, i) => i + 1);
-    const existingPages = new Set(freeformInitialSignatures.map(s => s.page));
-
-    const newEntries = allPageNumbers
-      .filter(page => !existingPages.has(page))
-      .map(page => ({
-        ...template,
-        id: makeId(),
-        page,
-      }));
-
-    if (newEntries.length === 0) {
-      alert("All pages already have an initial signature.");
+    // Check if at least one signature is placed on the document
+    const hasFreeformSignatures = freeformSignatures.length > 0;
+    
+    // User must place signature somewhere on the document
+    if (!hasFreeformSignatures) {
+      setValidationError("You need to place at least one signature on the document.\n\nPlease drag your signature from the right sidebar onto the document.");
+      setSignatureError("Please drag and place your signature on the document before signing");
+      window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
 
-    setFreeformInitialSignatures(prev => [...prev, ...newEntries]);
+    // Save signature if drawn but not saved
+    if (hasDrawnSignature && !userSignature) {
+      await saveSignature();
+    }
+
+    setSigning(true);
+
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`/api/meetings/${meetingId}/sign`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          signature: finalSignature,
+          signaturePositions: freeformSignatures, // Include where signatures were placed
+        }),
+      });
+
+      if (!res.ok) {
+        const data = await res.json();
+        throw new Error(data.error || "Failed to sign");
+      }
+
+      const data = await res.json();
+      
+      // Show success modal
+      setSignSuccessMessage(data.message || "Document signed successfully!");
+      setShowSuccessModal(true);
+    } catch (err: any) {
+      alert(err.message || "Failed to sign document");
+    } finally {
+      setSigning(false);
+    }
   };
 
-  // ─── Drag Handlers ───────────────────────────────────────────────
+  if (loading) {
+    return (
+      <div className="h-screen flex items-center justify-center">
+        <Loader2 className="animate-spin text-blue-600" size={40} />
+      </div>
+    );
+  }
+
+  // Find fields assigned to current user (for name and date fields only, not signature)
+  const myFields = meeting.fields?.filter((f: any) => {
+    const recipientName = f.recipientName?.toLowerCase();
+    const userName = currentUser.name?.toLowerCase();
+    const userEmail = currentUser.email?.toLowerCase();
+    
+    return recipientName === userName || recipientName === userEmail;
+  }) || [];
+
+  // Get all participants who have already signed with their signature positions
+  const signedParticipants = meeting.participants?.filter((p: any) => p.signed) || [];
+  
+  // Collect all previous signatures to display
+  const previousSignatures: Array<{
+    id: string;
+    page: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    signature: string;
+    signerName: string;
+  }> = [];
+  
+  signedParticipants.forEach((p: any) => {
+    if (p.signaturePositions && Array.isArray(p.signaturePositions)) {
+      p.signaturePositions.forEach((pos: any) => {
+        previousSignatures.push({
+          ...pos,
+          signature: p.signature,
+          signerName: p.name || p.email,
+        });
+      });
+    }
+  });
+
+  // Drag handlers
   const handleDragStart = (e: React.DragEvent) => {
     if (!userSignature) {
       e.preventDefault();
@@ -283,18 +292,6 @@ export default function SigningView({
     setDraggingItemType("signature");
     e.dataTransfer.effectAllowed = "copy";
     e.dataTransfer.setData("text/plain", "signature");
-  };
-
-  const handleInitialDragStart = (e: React.DragEvent) => {
-    if (!userInitialSignature) {
-      e.preventDefault();
-      alert("Please create or draw your initial signature first");
-      return;
-    }
-    setIsDraggingSignature(true);
-    setDraggingItemType("initial");
-    e.dataTransfer.effectAllowed = "copy";
-    e.dataTransfer.setData("text/plain", "initial");
   };
 
   const handleDragEnd = () => {
@@ -313,38 +310,29 @@ export default function SigningView({
   const handleDropOnPage = (e: React.DragEvent, pageNum: number) => {
     e.preventDefault();
     e.stopPropagation();
+    
     const dragData = e.dataTransfer.getData("text/plain");
+    
     const target = e.currentTarget as HTMLElement;
     const rect = target.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
 
-    if (dragData === "initial" && userInitialSignature) {
-      setFreeformInitialSignatures(prev => [
-        ...prev,
-        {
-          id: makeId(),
-          page: pageNum,
-          x: x - 50,
-          y: y - 20,
-          width: 100,
-          height: 40,
-        }
-      ]);
-    }
-    else if (dragData === "signature" && userSignature) {
+    // Handle signature drop
+    if (dragData === "signature" && userSignature) {
       setFreeformSignatures(prev => [
         ...prev,
         {
           id: makeId(),
           page: pageNum,
-          x: x - 70,
-          y: y - 25,
+          x: x - 70, // Center signature at cursor (assuming 140px width)
+          y: y - 25, // Center signature at cursor (assuming 50px height)
           width: 140,
           height: 50,
         }
       ]);
     }
+    // Handle department drop
     else if (dragData.startsWith("department:")) {
       const deptName = dragData.replace("department:", "");
       setFreeformOrgBadges(prev => [
@@ -361,6 +349,7 @@ export default function SigningView({
         }
       ]);
     }
+    // Handle division drop
     else if (dragData.startsWith("division:")) {
       const divName = dragData.replace("division:", "");
       setFreeformOrgBadges(prev => [
@@ -377,117 +366,13 @@ export default function SigningView({
         }
       ]);
     }
-
+    
     setIsDraggingSignature(false);
     setDraggingItemType(null);
   };
 
-  // ─── Handle Sign Submission ──────────────────────────────────────
-  const handleSign = async () => {
-    setSignatureError("");
-    setValidationError(null);
 
-    const finalFullSignature = userSignature || (hasDrawnSignature ? canvasRef.current?.toDataURL("image/png") : null);
-    const finalInitialSignature = userInitialSignature || (hasDrawnInitialSignature ? initialCanvasRef.current?.toDataURL("image/png") : null);
 
-    const hasFullPlaced = freeformSignatures.length > 0;
-    const hasInitialPlaced = freeformInitialSignatures.length > 0;
-
-    if (!hasFullPlaced && !hasInitialPlaced) {
-      setValidationError("Please place at least one signature (full or initial) on the document.\n\nDrag your signature from the right sidebar onto the document.");
-      setSignatureError("Please drag and place your signature on the document before signing");
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
-    }
-
-    if (!finalFullSignature && !finalInitialSignature) {
-      setValidationError("Please create or draw a signature (full or initial) before signing.");
-      setSignatureError("Please create your signature before signing");
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
-    }
-
-    if (hasDrawnSignature && !userSignature) {
-      await saveSignature();
-    }
-    if (hasDrawnInitialSignature && !userInitialSignature) {
-      await saveInitialSignature();
-    }
-
-    setSigning(true);
-
-    try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`/api/meetings/${meetingId}/sign`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          signature: finalFullSignature,
-          signaturePositions: freeformSignatures,
-          initialSignature: finalInitialSignature,
-          initialSignaturePositions: freeformInitialSignatures,
-        }),
-      });
-
-      if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Failed to sign");
-      }
-
-      const data = await res.json();
-      setSignSuccessMessage(data.message || "Document signed successfully!");
-      setShowSuccessModal(true);
-    } catch (err: any) {
-      alert(err.message || "Failed to sign document");
-    } finally {
-      setSigning(false);
-    }
-  };
-
-  if (loading) {
-    return (
-      <div className="h-screen flex items-center justify-center">
-        <Loader2 className="animate-spin text-blue-600" size={40} />
-      </div>
-    );
-  }
-
-  // ─── Existing: myFields, previousSignatures ─────────────────────
-  const myFields = meeting.fields?.filter((f: any) => {
-    const recipientName = f.recipientName?.toLowerCase();
-    const userName = currentUser.name?.toLowerCase();
-    const userEmail = currentUser.email?.toLowerCase();
-    return recipientName === userName || recipientName === userEmail;
-  }) || [];
-
-  const signedParticipants = meeting.participants?.filter((p: any) => p.signed) || [];
-  const previousSignatures: Array<{
-    id: string;
-    page: number;
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    signature: string;
-    signerName: string;
-  }> = [];
-
-  signedParticipants.forEach((p: any) => {
-    if (p.signaturePositions && Array.isArray(p.signaturePositions)) {
-      p.signaturePositions.forEach((pos: any) => {
-        previousSignatures.push({
-          ...pos,
-          signature: p.signature,
-          signerName: p.name || p.email,
-        });
-      });
-    }
-  });
-
-  // ─── Render ──────────────────────────────────────────────────────
   return (
     <div className="h-screen bg-[#f0f2f5] flex flex-col overflow-hidden">
       {/* Header */}
@@ -498,7 +383,7 @@ export default function SigningView({
           </div>
           <button
             onClick={handleSign}
-            disabled={signing || (!userSignature && !hasDrawnSignature && !userInitialSignature && !hasDrawnInitialSignature)}
+            disabled={signing || (!userSignature && !hasDrawnSignature)}
             className="bg-[#1a2b4a] text-white px-6 py-2 rounded-lg font-semibold hover:bg-[#0f1b2e] transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer"
           >
             {signing ? (
@@ -588,7 +473,7 @@ export default function SigningView({
                 {Array.from({ length: numPages }, (_, i) => {
                   const pageNum = i + 1;
                   return (
-                    <div
+                    <div 
                       key={pageNum}
                       id={`pdf-page-${pageNum}`}
                       className="mb-6 shadow-xl relative"
@@ -607,8 +492,9 @@ export default function SigningView({
                           }));
                         }}
                       />
-
-                      {/* ─── Previous signers' full signatures ─── */}
+                      {/* Show ALL fields for this page with recipient names */}
+                      
+                      {/* Show previous signers' signatures (read-only) */}
                       {previousSignatures
                         .filter(sig => sig.page === pageNum)
                         .map((sig) => (
@@ -622,27 +508,31 @@ export default function SigningView({
                               height: `${sig.height}px`,
                             }}
                           >
-                            <img
-                              src={sig.signature}
-                              alt="signature"
+                            <img 
+                              src={sig.signature} 
+                              alt="signature" 
                               className="w-full h-full object-contain p-1"
                             />
                           </div>
                         ))}
-
-                      {/* ─── Name & Date fields ──────────────────────── */}
+                      
+                      {/* Show name and date fields (not signature fields) */}
                       {meeting.fields
-                        ?.filter((f: any) => f.page === pageNum && f.type !== 'signature' && f.type !== 'initial')
+                        ?.filter((f: any) => f.page === pageNum && f.type !== 'signature')
                         .map((field: any, idx: number) => {
                           const isMyField = myFields.some((mf: any) => mf.id === field.id);
+                          
+                          // Find participant who owns this field
                           const fieldRecipient = field.recipientName?.toLowerCase() || '';
                           const fieldOwner = meeting.participants?.find((p: any) => {
                             const pName = p.name?.toLowerCase() || '';
                             const pEmail = p.email?.toLowerCase() || '';
-                            return fieldRecipient === pName || fieldRecipient === pEmail ||
+                            return fieldRecipient === pName || fieldRecipient === pEmail || 
                                    pName.includes(fieldRecipient) || fieldRecipient.includes(pName);
                           });
                           const ownerSigned = fieldOwner?.signed;
+
+                          // Display name - prefer field recipientName, fallback to owner name
                           const displayName = field.recipientName || fieldOwner?.name || 'Pending';
 
                           return (
@@ -660,14 +550,17 @@ export default function SigningView({
                                 height: `${field.hPct * 100}%`,
                               }}
                             >
+                              {/* Show name if field type is name */}
                               {field.type === 'name' && (
                                 <div className="flex items-center justify-center h-full text-sm font-semibold text-gray-800 px-2">
                                   {ownerSigned ? fieldOwner.name : (isMyField ? currentUser.name : displayName)}
                                 </div>
                               )}
+                              
+                              {/* Show date if field type is date */}
                               {field.type === 'date' && (
                                 <div className="flex items-center justify-center h-full text-xs text-gray-700 px-2">
-                                  {ownerSigned
+                                  {ownerSigned 
                                     ? new Date(fieldOwner.signedAt).toLocaleDateString()
                                     : (isMyField ? new Date().toLocaleDateString() : new Date().toLocaleDateString())
                                   }
@@ -676,8 +569,8 @@ export default function SigningView({
                             </div>
                           );
                         })}
-
-                      {/* ─── User's full signatures placed ────────── */}
+                      
+                      {/* Show freeform signatures dropped anywhere */}
                       {freeformSignatures
                         .filter(sig => sig.page === pageNum)
                         .map((sig) => (
@@ -705,9 +598,9 @@ export default function SigningView({
                             }}
                           >
                             <div className="w-full h-full border-2 border-blue-500 rounded bg-white shadow-lg group relative">
-                              <img
-                                src={userSignature || ''}
-                                alt="signature"
+                              <img 
+                                src={userSignature || ''} 
+                                alt="signature" 
                                 className="w-full h-full object-contain p-1 pointer-events-none"
                               />
                               <button
@@ -720,52 +613,8 @@ export default function SigningView({
                             </div>
                           </Rnd>
                         ))}
-
-                      {/* ─── User's initial signatures placed ────── */}
-                      {freeformInitialSignatures
-                        .filter(sig => sig.page === pageNum)
-                        .map((sig) => (
-                          <Rnd
-                            key={sig.id}
-                            size={{ width: sig.width, height: sig.height }}
-                            position={{ x: sig.x, y: sig.y }}
-                            bounds="parent"
-                            disableDragging={isDraggingSignature}
-                            onDragStop={(e, d) => {
-                              setFreeformInitialSignatures(prev =>
-                                prev.map(s => s.id === sig.id ? { ...s, x: d.x, y: d.y } : s)
-                              );
-                            }}
-                            onResizeStop={(e, dir, ref, delta, position) => {
-                              setFreeformInitialSignatures(prev =>
-                                prev.map(s => s.id === sig.id ? {
-                                  ...s,
-                                  x: position.x,
-                                  y: position.y,
-                                  width: ref.offsetWidth,
-                                  height: ref.offsetHeight,
-                                } : s)
-                              );
-                            }}
-                          >
-                            <div className="w-full h-full border-2 border-purple-500 rounded bg-white shadow-lg group relative">
-                              <img
-                                src={userInitialSignature || ''}
-                                alt="initial signature"
-                                className="w-full h-full object-contain p-1 pointer-events-none"
-                              />
-                              <button
-                                onClick={() => setFreeformInitialSignatures(prev => prev.filter(s => s.id !== sig.id))}
-                                className="absolute -top-2 -left-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 cursor-pointer hover:bg-red-600"
-                                title="Remove initial signature"
-                              >
-                                <Trash2 size={12} />
-                              </button>
-                            </div>
-                          </Rnd>
-                        ))}
-
-                      {/* ─── Department/Division badges ────────────── */}
+                      
+                      {/* Show freeform department/division badges dropped anywhere */}
                       {freeformOrgBadges
                         .filter(badge => badge.page === pageNum)
                         .map((badge) => (
@@ -793,8 +642,8 @@ export default function SigningView({
                             }}
                           >
                             <div className={`w-full h-full border-2 rounded shadow-lg group relative flex items-center justify-center text-xs font-medium px-2 ${
-                              badge.type === 'department'
-                                ? 'border-indigo-500 bg-indigo-100 text-indigo-700'
+                              badge.type === 'department' 
+                                ? 'border-indigo-500 bg-indigo-100 text-indigo-700' 
                                 : 'border-blue-500 bg-blue-100 text-blue-700'
                             }`}>
                               <span className="pointer-events-none">{badge.text}</span>
@@ -816,18 +665,17 @@ export default function SigningView({
           </div>
         </main>
 
-        {/* ─── Right Sidebar ─────────────────────────────────────────── */}
+        {/* Right: Signature Pad */}
         <aside className="w-80 bg-white border-l p-6 flex flex-col gap-6 overflow-y-auto shadow-lg flex-shrink-0">
-          {/* ─── SECTION: Full Signature ─── */}
           <div>
             <h3 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
               <PenTool className="w-4 h-4 text-blue-600" />
               Your Signature
             </h3>
-
+            
             {userSignature ? (
               <div className="border rounded-lg p-4 bg-gray-50">
-                <div
+                <div 
                   draggable
                   onDragStart={handleDragStart}
                   onDragEnd={handleDragEnd}
@@ -879,78 +727,6 @@ export default function SigningView({
             )}
           </div>
 
-          {/* ─── SECTION: Initial Signature ────────────────────────── */}
-          <div className="border-t pt-4">
-            <h3 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
-              <PenTool className="w-4 h-4 text-purple-500" />
-              Your Initials
-            </h3>
-
-            {userInitialSignature ? (
-              <div className="border rounded-lg p-4 bg-gray-50">
-                <div
-                  draggable
-                  onDragStart={handleInitialDragStart}
-                  onDragEnd={handleDragEnd}
-                  className="cursor-move hover:bg-gray-100 rounded border-2 border-dashed border-purple-300 p-2"
-                >
-                  <img src={userInitialSignature} alt="Your initials" className="w-full h-16 object-contain pointer-events-none" />
-                  <p className="text-xs text-center text-purple-600 font-medium mt-2">
-                    ⬆️ Drag to document
-                  </p>
-                </div>
-                <button
-                  onClick={() => setUserInitialSignature(null)}
-                  className="mt-3 w-full text-sm text-purple-600 hover:text-purple-700 font-medium cursor-pointer"
-                >
-                  Create New Initials
-                </button>
-              </div>
-            ) : (
-              <div className="border rounded-lg overflow-hidden">
-                <canvas
-                  ref={initialCanvasRef}
-                  width={280}
-                  height={80}
-                  className="bg-white cursor-crosshair border-b touch-none"
-                  onMouseDown={startInitialDrawing}
-                  onMouseMove={drawInitial}
-                  onMouseUp={stopInitialDrawing}
-                  onMouseLeave={stopInitialDrawing}
-                  onTouchStart={startInitialDrawing}
-                  onTouchMove={drawInitial}
-                  onTouchEnd={stopInitialDrawing}
-                />
-                <div className="bg-gray-50 p-3 flex gap-2">
-                  <button
-                    onClick={clearInitialSignature}
-                    className="flex-1 text-xs bg-white border rounded py-1.5 hover:bg-gray-50 cursor-pointer"
-                  >
-                    Clear
-                  </button>
-                  <button
-                    onClick={saveInitialSignature}
-                    disabled={!hasDrawnInitialSignature}
-                    className="flex-1 text-xs bg-[#1a2b4a] text-white rounded py-1.5 hover:bg-[#0f1b2e] disabled:opacity-50 cursor-pointer"
-                  >
-                    Save
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* ─── NEW BUTTON ───────────────────────────────────────── */}
-            {freeformInitialSignatures.length > 0 && (
-              <button
-                onClick={applyInitialsToAllPages}
-                className="mt-3 w-full bg-purple-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-purple-700 transition"
-              >
-                Apply Initials to All Pages
-              </button>
-            )}
-          </div>
-
-          {/* ─── Signing As ─────────────────────────────────────────── */}
           <div className="border-t pt-6">
             <h3 className="text-sm font-bold text-gray-700 mb-3">Signing As</h3>
             <div className="space-y-3 text-sm bg-gray-50 rounded-lg p-4">
@@ -1011,7 +787,6 @@ export default function SigningView({
             </div>
           </div>
 
-          {/* ─── Document Info ──────────────────────────────────────── */}
           <div className="border-t pt-6">
             <h3 className="text-sm font-bold text-gray-700 mb-3">Document Info</h3>
             <div className="space-y-2 text-sm">
@@ -1022,8 +797,7 @@ export default function SigningView({
             </div>
           </div>
 
-          {/* ─── Ready to Sign ─────────────────────────────────────── */}
-          {(userSignature || hasDrawnSignature || userInitialSignature || hasDrawnInitialSignature) && (
+          {(userSignature || hasDrawnSignature) && (
             <div className="mt-auto bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
               <CheckCircle2 className="w-5 h-5 text-green-600 shrink-0 mt-0.5" />
               <div className="text-sm">
@@ -1037,7 +811,7 @@ export default function SigningView({
         </aside>
       </div>
 
-      {/* ─── Success Modal ─────────────────────────────────────────── */}
+      {/* Success Modal */}
       <SuccessModal
         isOpen={showSuccessModal}
         title="Document Signed!"
@@ -1049,10 +823,11 @@ export default function SigningView({
         buttonText="Back to Dashboard"
       />
 
-      {/* ─── Validation Error Modal ────────────────────────────────── */}
+      {/* Validation Error Modal */}
       {validationError && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-50">
           <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full mx-4 p-6 animate-in fade-in zoom-in duration-200">
+            {/* Error Icon */}
             <div className="flex justify-center mb-4">
               <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center">
                 <svg className="w-8 h-8 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1060,12 +835,18 @@ export default function SigningView({
                 </svg>
               </div>
             </div>
+
+            {/* Title */}
             <h3 className="text-xl font-bold text-gray-900 text-center mb-3">
               Cannot Sign Document
             </h3>
+
+            {/* Message */}
             <div className="text-sm text-gray-700 mb-6 whitespace-pre-line bg-red-50 border border-red-200 rounded-lg p-4">
               {validationError}
             </div>
+
+            {/* Close Button */}
             <button
               onClick={() => setValidationError(null)}
               className="w-full bg-red-600 text-white py-3 rounded-lg font-semibold hover:bg-red-700 transition cursor-pointer"
