@@ -23,6 +23,7 @@ function getBearerToken(req: Request) {
 }
 
 function safeFileBaseName(originalName: string) {
+  // Keep extension, sanitize base name
   const ext = path.extname(originalName).toLowerCase();
   const base = path.basename(originalName, ext).replace(/[^a-zA-Z0-9-_]/g, "_");
   return { base, ext };
@@ -36,57 +37,14 @@ function requireJwtSecret() {
 
 function requireUserId(decoded: any) {
   const id = decoded?.id;
-  if (!id || typeof id !== "string")
-    throw new Error("Invalid token payload: missing id");
+  if (!id || typeof id !== "string") throw new Error("Invalid token payload: missing id");
   return new ObjectId(id);
 }
-
-/**
- * Shared aggregation pipeline builder.
- *
- * CRITICAL: We strip out base64 signature images from participants. Each
- * signature is ~100 KB; a meeting with 11 participants was 6.4 MB. Without
- * this projection the /api/meetings response can be tens of MB per request,
- * causing multi-second page loads.
- *
- * The dashboard only needs: name, email, role, signed, isCurrent.
- * The signing page (/sign/[id]) fetches the signatures separately.
- */
-const buildMeetingsPipeline = (matchStage: Record<string, any>) => [
-  { $match: matchStage },
-  { $sort: { createdAt: -1 } },
-  {
-    $project: {
-      _id: 1,
-      title: 1,
-      date: 1,
-      status: 1,
-      description: 1,
-      sentAt: 1,
-      createdAt: 1,
-      currentSignerIndex: 1,
-      participants: {
-        $map: {
-          input: { $ifNull: ["$participants", []] },
-          as: "p",
-          in: {
-            name: "$$p.name",
-            email: "$$p.email",
-            role: "$$p.role",
-            signed: "$$p.signed",
-            isCurrent: "$$p.isCurrent",
-          },
-        },
-      },
-    },
-  },
-];
 
 export async function GET(req: Request) {
   try {
     const token = getBearerToken(req);
-    if (!token)
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     let decoded: any;
     try {
@@ -106,34 +64,32 @@ export async function GET(req: Request) {
     const user = await usersDb.findOne({ _id: new ObjectId(decoded.id) });
     const userEmail = user?.email;
 
-    // Run both queries in parallel. Each one uses $project to send only
-    // the fields the dashboard needs.
-    const [organizedMeetings, participantMeetings] = await Promise.all([
-      db
+    // Fetch meetings where user is organizer
+    const organizedMeetings = await db
+      .collection("meetings")
+      .find({ organizerId: organizerIdQuery })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    // Fetch meetings where user is a participant (if email found)
+    let participantMeetings: any[] = [];
+    if (userEmail) {
+      participantMeetings = await db
         .collection("meetings")
-        .aggregate(buildMeetingsPipeline({ organizerId: organizerIdQuery }))
-        .toArray(),
+        .find({ 
+          "participants.email": userEmail,
+          organizerId: { $nin: [new ObjectId(decoded.id), decoded.id] } // Exclude if also organizer
+        })
+        .sort({ createdAt: -1 })
+        .toArray();
+    }
 
-      userEmail
-        ? db
-            .collection("meetings")
-            .aggregate(
-              buildMeetingsPipeline({
-                "participants.email": userEmail,
-                organizerId: {
-                  $nin: [new ObjectId(decoded.id), decoded.id],
-                },
-              })
-            )
-            .toArray()
-        : Promise.resolve([] as any[]),
-    ]);
-
+    // Combine both lists
     const allMeetings = [...organizedMeetings, ...participantMeetings];
 
-    return NextResponse.json({
+    return NextResponse.json({ 
       meetings: allMeetings,
-      userEmail,
+      userEmail // Include for client-side filtering if needed
     });
   } catch (err) {
     console.error("MEETINGS GET ERROR:", err);
@@ -144,8 +100,7 @@ export async function GET(req: Request) {
 export async function POST(req: Request) {
   try {
     const token = getBearerToken(req);
-    if (!token)
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
     let decoded: any;
     try {
@@ -162,38 +117,27 @@ export async function POST(req: Request) {
     const dataRaw = formData.get("data");
     const file = formData.get("file") as File | null;
 
-    if (!dataRaw)
-      return NextResponse.json({ error: "Missing data" }, { status: 400 });
-    if (!file)
-      return NextResponse.json({ error: "Missing file" }, { status: 400 });
+    if (!dataRaw) return NextResponse.json({ error: "Missing data" }, { status: 400 });
+    if (!file) return NextResponse.json({ error: "Missing file" }, { status: 400 });
 
     if (!allowedMimeTypes.has(file.type)) {
-      return NextResponse.json(
-        { error: "Only PDF or Word documents allowed" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Only PDF or Word documents allowed" }, { status: 400 });
     }
 
     let data: any;
     try {
       data = JSON.parse(String(dataRaw));
     } catch {
-      return NextResponse.json(
-        { error: "Invalid JSON in data" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid JSON in data" }, { status: 400 });
     }
 
-    const { title, description, participants, action, date, signingMode } =
-      data;
+    const { title, description, participants, action, date, signingMode } = data;
 
     if (!title?.trim() || !description?.trim() || !Array.isArray(participants)) {
-      return NextResponse.json(
-        { error: "Invalid form data" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Invalid form data" }, { status: 400 });
     }
 
+    // Validate participants
     const cleanedParticipants = participants.map((p: any) => ({
       name: String(p?.name || "").trim(),
       email: String(p?.email || "").trim(),
@@ -202,28 +146,23 @@ export async function POST(req: Request) {
     }));
 
     if (cleanedParticipants.some((p: any) => !p.name || !p.email)) {
-      return NextResponse.json(
-        { error: "Each participant must have name and email" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Each participant must have name and email" }, { status: 400 });
     }
 
-    const emails = cleanedParticipants.map((p: any) =>
-      p.email.toLowerCase()
-    );
+    // Prevent duplicate emails
+    const emails = cleanedParticipants.map((p: any) => p.email.toLowerCase());
     const unique = new Set(emails);
     if (unique.size !== emails.length) {
-      return NextResponse.json(
-        { error: "Duplicate participant emails" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Duplicate participant emails" }, { status: 400 });
     }
 
+    // Ensure upload directory exists
     const uploadDir = path.join(process.cwd(), "public", "uploads");
     if (!fssync.existsSync(uploadDir)) {
       fssync.mkdirSync(uploadDir, { recursive: true });
     }
 
+    // Write file
     const buffer = Buffer.from(await file.arrayBuffer());
     const { base, ext } = safeFileBaseName(file.name);
     const rand = crypto.randomBytes(6).toString("hex");
@@ -232,6 +171,7 @@ export async function POST(req: Request) {
 
     await fs.writeFile(absolutePath, buffer);
 
+    // Save record in MongoDB
     const client = await clientPromise;
     const db = client.db("e_sign_db");
 
@@ -239,32 +179,26 @@ export async function POST(req: Request) {
 
     const result = await db.collection("meetings").insertOne({
       title: title.trim(),
-      date: date ? new Date(date) : null,
+      date: date ? new Date(date) : null, // optional: keep null if not provided
       description: description.trim(),
       participants: cleanedParticipants,
       originalFileName: file.name,
       storedFileName,
       filePath: `/api/file?id=${encodeURIComponent(storedFileName)}`,
       status,
-      organizerId: userId,
+      organizerId: userId, // store as ObjectId
       fields: [],
-      signingMode: signingMode || "sequential",
+      signingMode: signingMode || "sequential", // Default to sequential if not provided
       createdAt: new Date(),
       updatedAt: new Date(),
     });
 
     return NextResponse.json({
-      message:
-        status === "Prepared"
-          ? "Meeting prepared"
-          : "Meeting saved as draft",
+      message: status === "Prepared" ? "Meeting prepared" : "Meeting saved as draft",
       meetingId: result.insertedId.toString(),
     });
   } catch (err) {
     console.error("MEETING API ERROR:", err);
-    return NextResponse.json(
-      { error: "Internal server error" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
   }
 }
