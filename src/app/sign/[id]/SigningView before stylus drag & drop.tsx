@@ -75,19 +75,6 @@ export default function SigningView({
   const [validationError, setValidationError] = useState<string | null>(null);
   const [pageRects, setPageRects] = useState<Record<number, { width: number; height: number }>>({});
 
-  // ─── TOUCH DRAG STATE ───────────────────────────────────────────
-  const [touchDrag, setTouchDrag] = useState<{
-    type: 'signature' | 'initial' | null;
-    imgSrc: string;
-    offsetX: number;
-    offsetY: number;
-    clone: HTMLElement | null;
-  } | null>(null);
-
-  // ─── SELECTION STATE FOR DELETE BUTTON ─────────────────────────
-  const [selectedSignatureId, setSelectedSignatureId] = useState<string | null>(null);
-  const [selectedInitialId, setSelectedInitialId] = useState<string | null>(null);
-
   // ─── Fetch PDF ────────────────────────────────────────────────────
   useEffect(() => {
     async function fetchPdf() {
@@ -283,135 +270,9 @@ export default function SigningView({
     }
 
     setFreeformInitialSignatures(prev => [...prev, ...newEntries]);
-    // Select the last newly added entry so the delete button appears
-    if (newEntries.length > 0) {
-      setSelectedInitialId(newEntries[newEntries.length - 1].id);
-    }
   };
 
-  // ─── Touch Drag Handlers ─────────────────────────────────────────
-  const handleTouchStart = (e: React.TouchEvent, type: 'signature' | 'initial') => {
-    e.preventDefault();
-    const touch = e.touches[0];
-    const target = e.currentTarget as HTMLElement;
-    const rect = target.getBoundingClientRect();
-    const imgSrc = type === 'signature' ? userSignature : userInitialSignature;
-    if (!imgSrc) return;
-
-    const clone = target.cloneNode(true) as HTMLElement;
-    clone.style.position = 'fixed';
-    clone.style.width = type === 'signature' ? '140px' : '100px';
-    clone.style.height = type === 'signature' ? '50px' : '40px';
-    clone.style.pointerEvents = 'none';
-    clone.style.opacity = '0.8';
-    clone.style.zIndex = '9999';
-    clone.style.border = '2px dashed #6366f1';
-    clone.style.borderRadius = '8px';
-    clone.style.background = 'white';
-    clone.style.boxShadow = '0 4px 12px rgba(0,0,0,0.2)';
-    const img = clone.querySelector('img');
-    if (img) img.style.width = '100%';
-    document.body.appendChild(clone);
-
-    clone.style.left = (touch.clientX - 70) + 'px';
-    clone.style.top = (touch.clientY - 25) + 'px';
-
-    setTouchDrag({
-      type,
-      imgSrc,
-      offsetX: touch.clientX - rect.left,
-      offsetY: touch.clientY - rect.top,
-      clone,
-    });
-
-    setIsDraggingSignature(true);
-    setDraggingItemType(type);
-  };
-
-  const handleTouchMove = (e: TouchEvent) => {
-    if (!touchDrag || !touchDrag.clone) return;
-    e.preventDefault();
-    const touch = e.touches[0];
-    touchDrag.clone.style.left = (touch.clientX - 70) + 'px';
-    touchDrag.clone.style.top = (touch.clientY - 25) + 'px';
-  };
-
-  const handleTouchEnd = (e: TouchEvent) => {
-    if (!touchDrag || !touchDrag.clone) return;
-    e.preventDefault();
-
-    const touch = e.changedTouches[0];
-    const elementAtPoint = document.elementFromPoint(touch.clientX, touch.clientY);
-    let pageElement = elementAtPoint?.closest('[data-page-number]') as HTMLElement | null;
-    if (!pageElement) {
-      const pages = document.querySelectorAll('[data-page-number]');
-      for (const p of pages) {
-        const rect = p.getBoundingClientRect();
-        if (touch.clientX >= rect.left && touch.clientX <= rect.right &&
-            touch.clientY >= rect.top && touch.clientY <= rect.bottom) {
-          pageElement = p as HTMLElement;
-          break;
-        }
-      }
-    }
-
-    if (pageElement) {
-      const pageNum = parseInt(pageElement.dataset.pageNumber || '0', 10);
-      const rect = pageElement.getBoundingClientRect();
-      const x = touch.clientX - rect.left;
-      const y = touch.clientY - rect.top;
-
-      if (touchDrag.type === 'signature' && userSignature) {
-        const newSig = {
-          id: makeId(),
-          page: pageNum,
-          x: x - 70,
-          y: y - 25,
-          width: 140,
-          height: 50,
-        };
-        setFreeformSignatures(prev => [...prev, newSig]);
-        setSelectedSignatureId(newSig.id); // auto-select
-      } else if (touchDrag.type === 'initial' && userInitialSignature) {
-        const newSig = {
-          id: makeId(),
-          page: pageNum,
-          x: x - 50,
-          y: y - 20,
-          width: 100,
-          height: 40,
-        };
-        setFreeformInitialSignatures(prev => [...prev, newSig]);
-        setSelectedInitialId(newSig.id); // auto-select
-      }
-    }
-
-    if (touchDrag.clone) {
-      document.body.removeChild(touchDrag.clone);
-    }
-    setTouchDrag(null);
-    setIsDraggingSignature(false);
-    setDraggingItemType(null);
-  };
-
-  useEffect(() => {
-    if (touchDrag) {
-      document.addEventListener('touchmove', handleTouchMove, { passive: false });
-      document.addEventListener('touchend', handleTouchEnd, { passive: false });
-      document.addEventListener('touchcancel', handleTouchEnd, { passive: false });
-    } else {
-      document.removeEventListener('touchmove', handleTouchMove);
-      document.removeEventListener('touchend', handleTouchEnd);
-      document.removeEventListener('touchcancel', handleTouchEnd);
-    }
-    return () => {
-      document.removeEventListener('touchmove', handleTouchMove);
-      document.removeEventListener('touchend', handleTouchEnd);
-      document.removeEventListener('touchcancel', handleTouchEnd);
-    };
-  }, [touchDrag]);
-
-  // ─── Mouse Drag Handlers ─────────────────────────────────────────
+  // ─── Drag Handlers ───────────────────────────────────────────────
   const handleDragStart = (e: React.DragEvent) => {
     if (!userSignature) {
       e.preventDefault();
@@ -459,28 +320,30 @@ export default function SigningView({
     const y = e.clientY - rect.top;
 
     if (dragData === "initial" && userInitialSignature) {
-      const newSig = {
-        id: makeId(),
-        page: pageNum,
-        x: x - 50,
-        y: y - 20,
-        width: 100,
-        height: 40,
-      };
-      setFreeformInitialSignatures(prev => [...prev, newSig]);
-      setSelectedInitialId(newSig.id); // auto-select
+      setFreeformInitialSignatures(prev => [
+        ...prev,
+        {
+          id: makeId(),
+          page: pageNum,
+          x: x - 50,
+          y: y - 20,
+          width: 100,
+          height: 40,
+        }
+      ]);
     }
     else if (dragData === "signature" && userSignature) {
-      const newSig = {
-        id: makeId(),
-        page: pageNum,
-        x: x - 70,
-        y: y - 25,
-        width: 140,
-        height: 50,
-      };
-      setFreeformSignatures(prev => [...prev, newSig]);
-      setSelectedSignatureId(newSig.id); // auto-select
+      setFreeformSignatures(prev => [
+        ...prev,
+        {
+          id: makeId(),
+          page: pageNum,
+          x: x - 70,
+          y: y - 25,
+          width: 140,
+          height: 50,
+        }
+      ]);
     }
     else if (dragData.startsWith("department:")) {
       const deptName = dragData.replace("department:", "");
@@ -729,7 +592,6 @@ export default function SigningView({
                       key={pageNum}
                       id={`pdf-page-${pageNum}`}
                       className="mb-6 shadow-xl relative"
-                      data-page-number={pageNum}
                       onDragOver={handleDragOverPage}
                       onDrop={(e) => handleDropOnPage(e, pageNum)}
                     >
@@ -842,31 +704,19 @@ export default function SigningView({
                               );
                             }}
                           >
-                            <div
-                              className="w-full h-full border-2 border-blue-500 rounded bg-white shadow-lg group relative"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                // Toggle selection on tap
-                                setSelectedSignatureId(prev => prev === sig.id ? null : sig.id);
-                              }}
-                            >
+                            <div className="w-full h-full border-2 border-blue-500 rounded bg-white shadow-lg group relative">
                               <img
                                 src={userSignature || ''}
                                 alt="signature"
                                 className="w-full h-full object-contain p-1 pointer-events-none"
                               />
-                              {selectedSignatureId === sig.id && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setFreeformSignatures(prev => prev.filter(s => s.id !== sig.id));
-                                    setSelectedSignatureId(null);
-                                  }}
-                                  className="absolute -top-2 -right-2 bg-white text-red-500 rounded-full shadow-md border p-1 w-7 h-7 flex items-center justify-center z-20 cursor-pointer"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              )}
+                              <button
+                                onClick={() => setFreeformSignatures(prev => prev.filter(s => s.id !== sig.id))}
+                                className="absolute -top-2 -left-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 cursor-pointer hover:bg-red-600"
+                                title="Remove signature"
+                              >
+                                <Trash2 size={12} />
+                              </button>
                             </div>
                           </Rnd>
                         ))}
@@ -898,30 +748,19 @@ export default function SigningView({
                               );
                             }}
                           >
-                            <div
-                              className="w-full h-full border-2 border-purple-500 rounded bg-white shadow-lg group relative"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedInitialId(prev => prev === sig.id ? null : sig.id);
-                              }}
-                            >
+                            <div className="w-full h-full border-2 border-purple-500 rounded bg-white shadow-lg group relative">
                               <img
                                 src={userInitialSignature || ''}
                                 alt="initial signature"
                                 className="w-full h-full object-contain p-1 pointer-events-none"
                               />
-                              {selectedInitialId === sig.id && (
-                                <button
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setFreeformInitialSignatures(prev => prev.filter(s => s.id !== sig.id));
-                                    setSelectedInitialId(null);
-                                  }}
-                                  className="absolute -top-2 -right-2 bg-white text-red-500 rounded-full shadow-md border p-1 w-7 h-7 flex items-center justify-center z-20 cursor-pointer"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              )}
+                              <button
+                                onClick={() => setFreeformInitialSignatures(prev => prev.filter(s => s.id !== sig.id))}
+                                className="absolute -top-2 -left-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 cursor-pointer hover:bg-red-600"
+                                title="Remove initial signature"
+                              >
+                                <Trash2 size={12} />
+                              </button>
                             </div>
                           </Rnd>
                         ))}
@@ -961,10 +800,10 @@ export default function SigningView({
                               <span className="pointer-events-none">{badge.text}</span>
                               <button
                                 onClick={() => setFreeformOrgBadges(prev => prev.filter(b => b.id !== badge.id))}
-                                className="absolute -top-2 -right-2 bg-white text-gray-400 hover:text-red-500 rounded-full shadow-md border p-1 w-7 h-7 flex items-center justify-center opacity-0 group-hover:opacity-100 group-active:opacity-100 group-focus-within:opacity-100 transition-opacity z-20 cursor-pointer touch:opacity-100"
-                                style={{ touchAction: 'manipulation' }}
+                                className="absolute -top-2 -left-2 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity z-10 cursor-pointer hover:bg-red-600"
+                                title="Remove badge"
                               >
-                                <Trash2 size={14} />
+                                <Trash2 size={12} />
                               </button>
                             </div>
                           </Rnd>
@@ -979,7 +818,7 @@ export default function SigningView({
 
         {/* ─── Right Sidebar ─────────────────────────────────────────── */}
         <aside className="w-80 bg-white border-l p-6 flex flex-col gap-6 overflow-y-auto shadow-lg flex-shrink-0">
-          {/* ─── Full Signature ─── */}
+          {/* ─── SECTION: Full Signature ─── */}
           <div>
             <h3 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
               <PenTool className="w-4 h-4 text-blue-600" />
@@ -992,8 +831,7 @@ export default function SigningView({
                   draggable
                   onDragStart={handleDragStart}
                   onDragEnd={handleDragEnd}
-                  onTouchStart={(e) => handleTouchStart(e, 'signature')}
-                  className="cursor-move hover:bg-gray-100 rounded border-2 border-dashed border-blue-300 p-2 touch-none"
+                  className="cursor-move hover:bg-gray-100 rounded border-2 border-dashed border-blue-300 p-2"
                 >
                   <img src={userSignature} alt="Your signature" className="w-full h-24 object-contain pointer-events-none" />
                   <p className="text-xs text-center text-blue-600 font-medium mt-2">
@@ -1041,7 +879,7 @@ export default function SigningView({
             )}
           </div>
 
-          {/* ─── Initial Signature ────────────────────────────────── */}
+          {/* ─── SECTION: Initial Signature ────────────────────────── */}
           <div className="border-t pt-4">
             <h3 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
               <PenTool className="w-4 h-4 text-purple-500" />
@@ -1054,8 +892,7 @@ export default function SigningView({
                   draggable
                   onDragStart={handleInitialDragStart}
                   onDragEnd={handleDragEnd}
-                  onTouchStart={(e) => handleTouchStart(e, 'initial')}
-                  className="cursor-move hover:bg-gray-100 rounded border-2 border-dashed border-purple-300 p-2 touch-none"
+                  className="cursor-move hover:bg-gray-100 rounded border-2 border-dashed border-purple-300 p-2"
                 >
                   <img src={userInitialSignature} alt="Your initials" className="w-full h-16 object-contain pointer-events-none" />
                   <p className="text-xs text-center text-purple-600 font-medium mt-2">
@@ -1102,7 +939,7 @@ export default function SigningView({
               </div>
             )}
 
-            {/* ─── Apply Initials to All Pages ───────────────────── */}
+            {/* ─── NEW BUTTON ───────────────────────────────────────── */}
             {freeformInitialSignatures.length > 0 && (
               <button
                 onClick={applyInitialsToAllPages}

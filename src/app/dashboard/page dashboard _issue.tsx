@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import {
@@ -65,7 +65,6 @@ export default function Dashboard() {
     });
   }, []);
 
-  // ─── pageWidth listener (unchanged) ──────────────────────────
   useEffect(() => {
     const updatePageWidth = () => {
       setPageWidth(Math.min(window.innerWidth * 0.5, 500));
@@ -75,120 +74,96 @@ export default function Dashboard() {
     return () => window.removeEventListener("resize", updatePageWidth);
   }, []);
 
-  // ─── REPLACED: parallel fetch for profile & meetings ─────────
   useEffect(() => {
     const token = localStorage.getItem("token");
     if (!token) {
       router.push("/login");
       return;
     }
-
-    const fetchAll = async () => {
+    async function checkTokenValidity() {
       try {
-        const [profileRes, meetingsRes] = await Promise.all([
-          fetch("/api/user/profile", {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
-          fetch("/api/meetings", {
-            headers: { Authorization: `Bearer ${token}` },
-          }),
-        ]);
-
-        // Profile
-        if (profileRes.status === 401) {
+        const res = await fetch("/api/user/profile", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (res.status === 401) {
           localStorage.removeItem("token");
           localStorage.removeItem("isAdmin");
           router.push("/login?expired=true");
-          return;
-        }
-        if (profileRes.ok) {
-          const data = await profileRes.json();
+        } else if (res.ok) {
+          const data = await res.json();
           setUserName(data.name || data.email || "User");
           setSignatureImg(data.signature || null);
+          // ─── CHANGED: read `initialSignature` ──────────────────────
           setInitialsImg(data.initialSignature || null);
           if (data.signature) localStorage.setItem("userSignature", data.signature);
         }
-
-        // Meetings
-        if (meetingsRes.ok) {
-          const data = await meetingsRes.json();
-          setMeetings(data.meetings || []);
-          setUserEmail(data.userEmail || null);
-        }
       } catch (err) {
-        console.error("Failed to fetch data:", err);
+        console.error("Token validation error:", err);
+      }
+    }
+    checkTokenValidity();
+  }, [router]);
+
+  useEffect(() => {
+    async function fetchMeetings() {
+      try {
+        const token = localStorage.getItem("token");
+        const res = await fetch("/api/meetings", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        setMeetings(data.meetings || []);
+        setUserEmail(data.userEmail || null);
+      } catch (err) {
+        console.error("Failed to fetch meetings:", err);
       } finally {
         setLoading(false);
       }
+    }
+    fetchMeetings();
+    const handleVisibilityChange = () => {
+      if (!document.hidden) fetchMeetings();
     };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
 
-    fetchAll();
-  }, [router]);
-
-  // ─── helper function (unchanged) ──────────────────────────────
   const getSigningProgress = (meeting: Meeting) => {
     const signers = meeting.participants.filter((p) => p.signed !== undefined);
     const signed = signers.filter((p) => p.signed).length;
     return { signed, total: signers.length };
   };
 
-  // ─── ADDED: useMemo for derived data ──────────────────────────
-  const needToSign = useMemo(() => {
-    if (!userEmail) return [];
-    return meetings.filter((m) => {
-      const myParticipant = m.participants.find((p) => p.email === userEmail);
-      return myParticipant && !myParticipant.signed && myParticipant.isCurrent;
-    });
-  }, [meetings, userEmail]);
-
-  const drafts = useMemo(
-    () => meetings.filter((m) => m.status === "Draft"),
-    [meetings]
-  );
-
-  const waitingForOthersCount = useMemo(() => {
-    return meetings.filter(
-      (m) =>
-        m.status === "Sent" &&
-        m.participants.some((p) => !p.signed) &&
-        !needToSign.some((need) => need._id === m._id)
-    ).length;
-  }, [meetings, needToSign]);
-
-  const completedCount = useMemo(
-    () => meetings.filter((m) => m.status === "Completed").length,
-    [meetings]
-  );
-
+  const drafts = meetings.filter((m) => m.status === "Draft");
+  const needToSign = meetings.filter((m) => {
+    if (!userEmail) return false;
+    const myParticipant = m.participants.find((p) => p.email === userEmail);
+    return myParticipant && !myParticipant.signed && myParticipant.isCurrent;
+  });
+  const waitingForOthersCount = meetings.filter(
+    (m) => m.status === "Sent" && m.participants.some((p) => !p.signed) &&
+    !needToSign.some(need => need._id === m._id)
+  ).length;
+  const completedCount = meetings.filter((m) => m.status === "Completed").length;
+  
   const currentMonth = new Date().getMonth();
   const currentYear = new Date().getFullYear();
-  const sentThisMonth = useMemo(() => {
-    return meetings.filter(
-      (m) =>
-        m.status === "Sent" &&
-        m.sentAt &&
-        new Date(m.sentAt).getMonth() === currentMonth &&
-        new Date(m.sentAt).getFullYear() === currentYear
-    ).length;
-  }, [meetings, currentMonth, currentYear]);
+  const sentThisMonth = meetings.filter(m => 
+    m.status === "Sent" && m.sentAt && 
+    new Date(m.sentAt).getMonth() === currentMonth &&
+    new Date(m.sentAt).getFullYear() === currentYear
+  ).length;
+  const totalSent = meetings.filter(m => m.status === "Sent").length;
 
-  const totalSent = useMemo(
-    () => meetings.filter((m) => m.status === "Sent").length,
-    [meetings]
-  );
+  const recentDocuments = [...meetings]
+    .filter(m => m.status !== "Draft")
+    .sort((a, b) => {
+      const dateA = a.sentAt || a.createdAt || "";
+      const dateB = b.sentAt || b.createdAt || "";
+      return new Date(dateB).getTime() - new Date(dateA).getTime();
+    })
+    .slice(0, 5);
 
-  const recentDocuments = useMemo(() => {
-    return [...meetings]
-      .filter((m) => m.status !== "Draft")
-      .sort((a, b) => {
-        const dateA = a.sentAt || a.createdAt || "";
-        const dateB = b.sentAt || b.createdAt || "";
-        return new Date(dateB).getTime() - new Date(dateA).getTime();
-      })
-      .slice(0, 5);
-  }, [meetings]);
-
-  // ─── getDraftedBy (unchanged) ──────────────────────────────────
   const getDraftedBy = (meeting: Meeting) => {
     if (meeting.participants && meeting.participants.length > 0) {
       return meeting.participants[0].email;
@@ -196,7 +171,7 @@ export default function Dashboard() {
     return "unknown@acc.org.bd";
   };
 
-  // ─── handleFileChange (unchanged) ──────────────────────────────
+  // ─── UPDATED: handleFileChange ──────────────────────────────────
   const handleFileChange = async (
     e: React.ChangeEvent<HTMLInputElement>,
     type: "signature" | "initials"
@@ -214,11 +189,12 @@ export default function Dashboard() {
       try {
         setIsUploading(true);
         const token = localStorage.getItem("token");
+        // ─── Build payload with correct field names ──────────────
         const payload: any = {};
         if (type === "signature") {
           payload.signature = base64String;
         } else {
-          payload.initialSignature = base64String;
+          payload.initialSignature = base64String; // ← was `initials`, now `initialSignature`
         }
         await fetch("/api/user/update-signature", {
           method: "POST",
@@ -234,7 +210,6 @@ export default function Dashboard() {
     reader.readAsDataURL(file);
   };
 
-  // ─── handlePreviewDocument (unchanged) ────────────────────────
   const handlePreviewDocument = async (meeting: Meeting) => {
     setPreviewMeeting(meeting);
     setPreviewLoading(true);
@@ -462,6 +437,7 @@ export default function Dashboard() {
                   <button className="text-xs text-indigo-600 group-hover:underline">Edit</button>
                 </div>
                 <div className="flex justify-center mt-2 min-h-[40px]">
+                  {/* This will show the uploaded initial signature (if any) */}
                   {initialsImg ? <img src={initialsImg} alt="Initials" className="max-h-10 object-contain" /> : <div className="flex flex-col items-center text-gray-400"><Upload size={16} /><span className="text-[10px] mt-1">Click to upload</span></div>}
                 </div>
               </div>

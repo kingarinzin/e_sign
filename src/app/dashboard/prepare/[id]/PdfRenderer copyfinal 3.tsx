@@ -108,7 +108,7 @@ export default function PdfRenderer({
   participants,
   selectedRecipient,
   onSelectRecipient,
-  recipientColorMap,
+  recipientColorMap, // ← NEW PROP
 }: {
   fileUrl: string;
   authToken: string;
@@ -123,7 +123,7 @@ export default function PdfRenderer({
   participants?: Array<{ name: string; email: string }>;
   selectedRecipient?: string | null;
   onSelectRecipient?: (name: string) => void;
-  recipientColorMap?: Record<string, string>;
+  recipientColorMap?: Record<string, string>; // ← NEW
 }) {
   const [numPages, setNumPages] = useState(0);
   const [pageRects, setPageRects] = useState<Record<number, PageRect>>({});
@@ -203,13 +203,18 @@ export default function PdfRenderer({
     setFields((prev) => prev.filter((f) => f.id !== fieldId));
   };
 
+  // ─── Helper to get color for a field ───────────────────────────
   const getFieldColor = (recipientName?: string): string => {
-    if (!recipientName || !recipientColorMap) return '#D1D5DB';
+    if (!recipientName || !recipientColorMap) return '#D1D5DB'; // gray-300 fallback
     return recipientColorMap[recipientName] || '#D1D5DB';
   };
 
+  // ─── Helper to get a light background tint ─────────────────────
   const getFieldBg = (color: string): string => {
-    if (color.startsWith('#')) return `${color}20`;
+    // If color is a hex, add 15% opacity for background
+    if (color.startsWith('#')) {
+      return `${color}20`; // ~12% opacity
+    }
     return 'rgba(209, 213, 219, 0.2)';
   };
 
@@ -238,7 +243,32 @@ export default function PdfRenderer({
               draggingFieldType={draggingFieldType}
               onRect={handlePageRect}
               onDrop={(pg, xPct, yPct) => {
-                // kept for compatibility, but actual drops are handled below
+                if (!draggingFieldType) return;
+
+                const recipientName = selectedRecipient || participants?.[0]?.name || 'Recipient';
+
+                let defaults;
+                if (draggingFieldType === "signature") {
+                  defaults = { wPct: 0.28, hPct: 0.09 };
+                } else if (draggingFieldType === "initial") {
+                  defaults = { wPct: 0.22, hPct: 0.07 };
+                } else if (draggingFieldType === "name") {
+                  defaults = { wPct: 0.28, hPct: 0.07 };
+                } else { // date
+                  defaults = { wPct: 0.22, hPct: 0.07 };
+                }
+
+                const newField: Field = {
+                  id: makeId(),
+                  type: draggingFieldType,
+                  page: pg,
+                  xPct,
+                  yPct,
+                  ...defaults,
+                  recipientName,
+                };
+
+                setFields((prev) => [...prev, newField]);
               }}
             >
               <Page
@@ -246,114 +276,8 @@ export default function PdfRenderer({
                 width={700}
                 renderTextLayer={false}
                 renderAnnotationLayer={false}
-                onLoadSuccess={(page) => {
-                  // ─── FIXED: use w and h, not width/height ─────
-                  setPageRects(prev => ({
-                    ...prev,
-                    [pageNumber]: { w: page.width, h: page.height }
-                  }));
-                }}
               />
 
-              {/* ─── Drop overlay ─────────────────────────────────── */}
-              <div
-                className="absolute inset-0 z-5"
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  if (draggingFieldType || e.dataTransfer.types.includes('text/plain')) {
-                    e.dataTransfer.dropEffect = "copy";
-                  }
-                }}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-
-                  const dragData = e.dataTransfer.getData("text/plain");
-                  const target = e.currentTarget as HTMLElement;
-                  const rect = target.getBoundingClientRect();
-                  const x = e.clientX - rect.left;
-                  const y = e.clientY - rect.top;
-
-                  // ─── Recipient drag ─────────────────────────────
-                  if (dragData.startsWith("recipient:")) {
-                    const recipientName = dragData.replace("recipient:", "");
-                    const newField: Field = {
-                      id: makeId(),
-                      type: "name",
-                      page: pageNumber,
-                      xPct: Math.min(1, Math.max(0, x / rect.width)),
-                      yPct: Math.min(1, Math.max(0, y / rect.height)),
-                      wPct: 0.28,
-                      hPct: 0.07,
-                      recipientName: recipientName,
-                    };
-                    setFields((prev) => [...prev, newField]);
-                    if (onSelectRecipient) onSelectRecipient(recipientName);
-                    return;
-                  }
-
-                  // ─── Standard field types ──────────────────────
-                  const recipientName = selectedRecipient || participants?.[0]?.name || 'Recipient';
-                  const xPct = Math.min(1, Math.max(0, x / rect.width));
-                  const yPct = Math.min(1, Math.max(0, y / rect.height));
-
-                  if (dragData === "initial" && userInitialSignature) {
-                    const newField: Field = {
-                      id: makeId(),
-                      type: "initial",
-                      page: pageNumber,
-                      xPct,
-                      yPct,
-                      wPct: 0.22,
-                      hPct: 0.07,
-                      recipientName,
-                    };
-                    setFields((prev) => [...prev, newField]);
-                  }
-                  else if (dragData === "signature" && userSignature) {
-                    const newField: Field = {
-                      id: makeId(),
-                      type: "signature",
-                      page: pageNumber,
-                      xPct,
-                      yPct,
-                      wPct: 0.28,
-                      hPct: 0.09,
-                      recipientName,
-                    };
-                    setFields((prev) => [...prev, newField]);
-                  }
-                  else if (dragData === "name") {
-                    const newField: Field = {
-                      id: makeId(),
-                      type: "name",
-                      page: pageNumber,
-                      xPct,
-                      yPct,
-                      wPct: 0.28,
-                      hPct: 0.07,
-                      recipientName,
-                    };
-                    setFields((prev) => [...prev, newField]);
-                  }
-                  else if (dragData === "date") {
-                    const newField: Field = {
-                      id: makeId(),
-                      type: "date",
-                      page: pageNumber,
-                      xPct,
-                      yPct,
-                      wPct: 0.22,
-                      hPct: 0.07,
-                      recipientName,
-                    };
-                    setFields((prev) => [...prev, newField]);
-                  }
-                }}
-              />
-
-              {/* ─── Render fields ────────────────────────────────── */}
               <div className="absolute inset-0 z-10 pointer-events-none">
                 {fields
                   .filter((f) => f.page === pageNumber)
@@ -377,7 +301,7 @@ export default function PdfRenderer({
                       ? (field.recipientName || "Initials")
                       : field.recipientName || "Signature";
 
-                    // ─── Signature / Initial ──────────────────────
+                    // ─── Signature / Initial: image or fallback text ───
                     if (isSignature || isInitial) {
                       let imgSrc: string | null = null;
                       if (isSignature) {
@@ -438,7 +362,7 @@ export default function PdfRenderer({
                       );
                     }
 
-                    // ─── Name & Date: editable text ──────────────
+                    // ─── Name & Date: editable text ─────────────────────
                     return (
                       <Rnd
                         key={field.id}

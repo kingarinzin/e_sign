@@ -38,10 +38,20 @@ function makeId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-// ─── Color palette ─────────────────────────────────────────────────
+// ─── Color palette for recipients ─────────────────────────────────
 const RECIPIENT_COLORS = [
-  '#4F46E5', '#DC2626', '#16A34A', '#D97706', '#7C3AED', '#0891B2',
-  '#DB2777', '#2563EB', '#65A30D', '#0D9488', '#EA580C', '#6366F1',
+  '#4F46E5', // Indigo
+  '#DC2626', // Red
+  '#16A34A', // Green
+  '#D97706', // Amber
+  '#7C3AED', // Purple
+  '#0891B2', // Cyan
+  '#DB2777', // Pink
+  '#2563EB', // Blue
+  '#65A30D', // Lime
+  '#0D9488', // Teal
+  '#EA580C', // Orange
+  '#6366F1', // Indigo Light
 ];
 
 export default function PreparePage() {
@@ -63,18 +73,17 @@ export default function PreparePage() {
   const [firstRecipient, setFirstRecipient] = useState("");
   const [signingMode, setSigningMode] = useState<"sequential" | "parallel">("sequential");
 
+  // ─── State for both signatures ──────────────────────────────────
   const [userSignature, setUserSignature] = useState<string | null>(null);
   const [userInitialSignature, setUserInitialSignature] = useState<string | null>(null);
 
-  // ─── Ref for custom drag image ─────────────────────────────────
-  const dragImageRef = useRef<HTMLDivElement | null>(null);
-
-  // ─── Color map ──────────────────────────────────────────────────
+  // ─── Generate a map from recipient name to color ──────────────
   const recipientColorMap = useMemo(() => {
     const map: Record<string, string> = {};
     const participants = meeting?.participants || [];
     participants.forEach((p: any, index: number) => {
-      map[p.name] = RECIPIENT_COLORS[index % RECIPIENT_COLORS.length];
+      const color = RECIPIENT_COLORS[index % RECIPIENT_COLORS.length];
+      map[p.name] = color;
     });
     return map;
   }, [meeting?.participants]);
@@ -127,7 +136,7 @@ export default function PreparePage() {
     return token ? { Authorization: `Bearer ${token}` } : {};
   }, []);
 
-  // ─── Load signatures ────────────────────────────────────────────
+  // ─── Load both full and initial signatures ─────────────────────
   useEffect(() => {
     async function loadUserSignature() {
       const localSig = localStorage.getItem("userSignature");
@@ -271,47 +280,6 @@ export default function PreparePage() {
     }
   };
 
-  // ─── Drag handlers for recipient → name field ─────────────────
-  const handleRecipientDragStart = (e: React.DragEvent, recipientName: string) => {
-    // Remove any leftover drag image
-    if (dragImageRef.current) {
-      document.body.removeChild(dragImageRef.current);
-      dragImageRef.current = null;
-    }
-
-    // Create a small badge
-    const dragImage = document.createElement("div");
-    dragImage.textContent = `👤 ${recipientName}`;
-    dragImage.style.cssText = `
-      padding: 4px 12px;
-      background: #4F46E5;
-      color: white;
-      border-radius: 20px;
-      font-size: 12px;
-      font-weight: 500;
-      display: inline-block;
-      white-space: nowrap;
-      position: fixed;
-      pointer-events: none;
-      z-index: 9999;
-      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-    `;
-    document.body.appendChild(dragImage);
-    dragImageRef.current = dragImage;
-
-    // Set the drag image (offset to center on the cursor)
-    e.dataTransfer.setDragImage(dragImage, 20, 12);
-    e.dataTransfer.effectAllowed = "copy";
-    e.dataTransfer.setData("text/plain", `recipient:${recipientName}`);
-  };
-
-  const handleRecipientDragEnd = () => {
-    if (dragImageRef.current) {
-      document.body.removeChild(dragImageRef.current);
-      dragImageRef.current = null;
-    }
-  };
-
   if (loading) {
     return (
       <div className="h-screen flex items-center justify-center bg-[#f8f9fc]">
@@ -335,11 +303,11 @@ export default function PreparePage() {
   const isPdf = storedName.toLowerCase().endsWith(".pdf");
   const fileUrl = id ? `/api/meetings/${id}/pdf` : "";
 
+  // ─── Get selected recipient's color for styling ──────────────
   const selectedColor = selectedRecipient ? recipientColorMap[selectedRecipient] : null;
 
   return (
     <div className="h-screen flex flex-col bg-[#f0f2f5] overflow-hidden">
-      {/* Top Navbar (unchanged) */}
       <header className="bg-white border-b px-8 py-3 flex justify-between items-center shadow-sm z-50">
         <div className="flex items-center gap-4">
           <button
@@ -378,7 +346,6 @@ export default function PreparePage() {
       </header>
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Left Thumbnails (unchanged) */}
         <aside className="w-48 bg-white border-r p-3 overflow-y-auto z-40 shadow-sm">
           <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
             Pages
@@ -397,7 +364,6 @@ export default function PreparePage() {
           )}
         </aside>
 
-        {/* Center: PDF Viewer (unchanged) */}
         <main className="flex-1 overflow-auto p-6 flex justify-center bg-[#e2e8f0] relative">
           <div className="max-w-3xl w-full">
             {!fileUrl ? (
@@ -424,13 +390,11 @@ export default function PreparePage() {
           </div>
         </main>
 
-        {/* Right Sidebar (with the updated recipient drag) */}
         <aside className="w-64 bg-white border-l p-4 flex flex-col gap-4 z-40 shadow-sm overflow-y-auto">
           <div>
             <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
               Draggable Fields
             </h3>
-            {/* Draggable field buttons – unchanged */}
             <div className="flex flex-col space-y-2">
               <div
                 draggable
@@ -479,10 +443,9 @@ export default function PreparePage() {
             </div>
           </div>
 
-          {/* Recipients list with drag support */}
           <div className="border-t pt-4">
             <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-3">
-              Recipients (Click to Select, or Drag to create name field)
+              Recipients (Click to Select)
             </p>
             <div className="space-y-2">
               {meeting?.participants?.map((p: any, i: number) => {
@@ -490,11 +453,8 @@ export default function PreparePage() {
                 return (
                   <div
                     key={i}
-                    draggable
-                    onDragStart={(e) => handleRecipientDragStart(e, p.name)}
-                    onDragEnd={handleRecipientDragEnd}
                     onClick={() => setSelectedRecipient(p.name)}
-                    className={`flex items-center gap-2 p-2 rounded-lg border-2 cursor-grab transition-all ${
+                    className={`flex items-center gap-2 p-2 rounded-lg border-2 cursor-pointer transition-all ${
                       selectedRecipient === p.name
                         ? 'bg-white'
                         : 'bg-gray-50 border-gray-200 hover:bg-gray-100 hover:border-gray-300'
