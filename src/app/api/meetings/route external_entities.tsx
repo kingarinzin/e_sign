@@ -75,7 +75,6 @@ const buildMeetingsPipeline = (matchStage: Record<string, any>) => [
             role: "$$p.role",
             signed: "$$p.signed",
             isCurrent: "$$p.isCurrent",
-            isExternal: "$$p.isExternal",
           },
         },
       },
@@ -195,13 +194,11 @@ export async function POST(req: Request) {
       );
     }
 
-    // ─── Build cleaned participants (preserves isExternal flag) ──
     const cleanedParticipants = participants.map((p: any) => ({
       name: String(p?.name || "").trim(),
       email: String(p?.email || "").trim(),
       role: String(p?.role || "Signer").trim(),
       signed: false,
-      isExternal: Boolean(p?.isExternal),
     }));
 
     if (cleanedParticipants.some((p: any) => !p.name || !p.email)) {

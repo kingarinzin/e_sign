@@ -5,70 +5,89 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { Loader2, AlertCircle } from "lucide-react";
 import dynamic from "next/dynamic";
 
-// Use dynamic import to avoid SSR issues with PDF rendering
 const SigningView = dynamic<{
   meeting: any;
   meetingId: string;
   currentUser: any;
-}>(() => import("./SigningView"), { 
+  signingToken: string | null;
+}>(() => import("./SigningView"), {
   ssr: false,
   loading: () => (
     <div className="h-screen flex items-center justify-center bg-[#f8f9fc]">
       <Loader2 className="animate-spin text-blue-600" size={40} />
     </div>
-  )
+  ),
 });
 
 export default function SignDocumentPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
   const searchParams = useSearchParams();
-  
+
   const [loading, setLoading] = useState(true);
   const [meeting, setMeeting] = useState<any>(null);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const [signingToken, setSigningToken] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
 
-  // Check authentication and authorization
   useEffect(() => {
     async function checkAccessAndFetchData() {
       try {
-        // Check if there's a signing token in URL
-        const signingToken = searchParams.get('token');
-        
-        if (signingToken) {
-          // Validate the signing token
-          const tokenRes = await fetch('/api/auth/validate-signing-token', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ token: signingToken, meetingId: id }),
+        let tokenForApi: string | null = null;
+        let externalUser: any = null;
+
+        // ─── Step 1: Handle signing token from URL if present ──────
+        const urlSigningToken = searchParams.get("token");
+
+        if (urlSigningToken) {
+          const tokenRes = await fetch("/api/auth/validate-signing-token", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token: urlSigningToken, meetingId: id }),
           });
 
-          if (tokenRes.ok) {
-            const tokenData = await tokenRes.json();
-            
-            if (tokenData.hasAccount) {
-              // User has account - auto-login
-              localStorage.setItem('token', tokenData.authToken);
-              // Continue with authenticated flow below
-            } else {
-              // User doesn't have account - redirect to signup
-              const signupUrl = `/signup?email=${encodeURIComponent(tokenData.email)}&name=${encodeURIComponent(tokenData.name || '')}&returnTo=/sign/${id}?token=${signingToken}`;
-              router.push(signupUrl);
-              return;
-            }
-          } else {
+          if (!tokenRes.ok) {
             const errorData = await tokenRes.json();
             setError(errorData.error || "Invalid or expired signing link");
             setLoading(false);
             return;
           }
+
+          const tokenData = await tokenRes.json();
+
+          if (tokenData.hasAccount) {
+            // Internal user with account — auto-login via localStorage
+            localStorage.setItem("token", tokenData.authToken);
+            tokenForApi = tokenData.authToken;
+          } else {
+            // External user — keep token in memory only
+            externalUser = {
+              name: tokenData.name,
+              email: tokenData.email,
+              isExternal: true,
+            };
+            tokenForApi = tokenData.authToken;
+            setSigningToken(tokenData.authToken);
+            setCurrentUser(externalUser);
+          }
         }
 
-        // Get the meeting to check if user should have access
-        const meetingRes = await fetch(`/api/meetings/${id}`);
-        
+        // ─── Step 2: Fallback to localStorage for internal users ──
+        if (!tokenForApi) {
+          const stored = localStorage.getItem("token");
+          if (!stored) {
+            router.push(`/login?returnTo=/sign/${id}`);
+            return;
+          }
+          tokenForApi = stored;
+        }
+
+        // ─── Step 3: Fetch the meeting ─────────────────────────────
+        const meetingRes = await fetch(`/api/meetings/${id}`, {
+          headers: { Authorization: `Bearer ${tokenForApi}` },
+        });
+
         if (!meetingRes.ok) {
           setError("Document not found");
           setLoading(false);
@@ -78,33 +97,29 @@ export default function SignDocumentPage() {
         const meetingData = await meetingRes.json();
         const mtg = meetingData.meeting || meetingData;
 
-        // Now check if user is logged in
-        const token = localStorage.getItem("token");
-        
-        if (!token) {
-          // No token - redirect to login
-          router.push(`/login?returnTo=/sign/${id}`);
-          return;
+        // ─── Step 4: Ensure we have a current user ─────────────────
+        if (!currentUser) {
+          const userRes = await fetch("/api/user/profile", {
+            headers: { Authorization: `Bearer ${tokenForApi}` },
+          });
+
+          if (!userRes.ok) {
+            localStorage.removeItem("token");
+            router.push(`/login?returnTo=/sign/${id}`);
+            return;
+          }
+
+          const userData = await userRes.json();
+          setCurrentUser(userData);
+          externalUser = userData;
         }
 
-        // Get current user
-        const userRes = await fetch("/api/user/profile", {
-          headers: { Authorization: `Bearer ${token}` },
-        });
+        const activeUser = externalUser || currentUser;
 
-        if (!userRes.ok) {
-          // Invalid token, redirect to login
-          localStorage.removeItem("token");
-          router.push(`/login?returnTo=/sign/${id}`);
-          return;
-        }
-
-        const userData = await userRes.json();
-        setCurrentUser(userData);
-        
-        // Check if current user is a participant
+        // ─── Step 5: Verify participant ────────────────────────────
         const participant = mtg.participants?.find(
-          (p: any) => p.email.toLowerCase() === userData.email.toLowerCase()
+          (p: any) =>
+            p.email.toLowerCase() === activeUser.email.toLowerCase()
         );
 
         if (!participant) {
@@ -113,20 +128,25 @@ export default function SignDocumentPage() {
           return;
         }
 
-        // Check if it's their turn
+        // ─── Step 6: Turn check (sequential mode) ──────────────────
         if (participant.role === "Signer") {
-          // If isCurrent is not set, check if they are the first signer
-          const signers = mtg.participants.filter((p: any) => p.role === "Signer");
-          const isFirstSigner = signers[0]?.email.toLowerCase() === userData.email.toLowerCase();
-          
-          if (participant.isCurrent === false || (!participant.isCurrent && !isFirstSigner)) {
+          const signers = mtg.participants.filter(
+            (p: any) => p.role === "Signer"
+          );
+          const isFirstSigner =
+            signers[0]?.email.toLowerCase() ===
+            activeUser.email.toLowerCase();
+
+          if (
+            participant.isCurrent === false ||
+            (!participant.isCurrent && !isFirstSigner)
+          ) {
             setError("It's not your turn yet. Please wait for the previous signer.");
             setLoading(false);
             return;
           }
         }
 
-        // Check if already signed
         if (participant.signed) {
           setError("You have already signed this document");
           setLoading(false);
@@ -144,6 +164,7 @@ export default function SignDocumentPage() {
     }
 
     checkAccessAndFetchData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, router, searchParams]);
 
   if (loading) {
@@ -164,7 +185,9 @@ export default function SignDocumentPage() {
       <div className="h-screen flex items-center justify-center bg-[#f8f9fc]">
         <div className="bg-white p-8 rounded-xl shadow-lg border border-red-200 max-w-md text-center">
           <AlertCircle className="w-16 h-16 text-red-500 mx-auto mb-4" />
-          <h2 className="text-xl font-bold text-gray-800 mb-2">Unable to Access Document</h2>
+          <h2 className="text-xl font-bold text-gray-800 mb-2">
+            Unable to Access Document
+          </h2>
           <p className="text-gray-600 mb-6">{error}</p>
           <button
             onClick={() => router.push("/dashboard")}
@@ -177,8 +200,15 @@ export default function SignDocumentPage() {
     );
   }
 
-  if (isAuthenticated && meeting) {
-    return <SigningView meeting={meeting} meetingId={id} currentUser={currentUser} />;
+  if (isAuthenticated && meeting && currentUser) {
+    return (
+      <SigningView
+        meeting={meeting}
+        meetingId={id}
+        currentUser={currentUser}
+        signingToken={signingToken}
+      />
+    );
   }
 
   return null;

@@ -26,22 +26,19 @@ export async function POST(req: Request) {
 
     // Verify meeting ID matches
     if (meetingId && decoded.meetingId !== meetingId) {
-      return NextResponse.json(
-        { error: "Token does not match document" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Token does not match document" }, { status: 400 });
     }
 
     const client = await clientPromise;
     const db = client.db("e_sign_db");
 
     // Check if user with this email exists
-    const user = await db.collection("users").findOne({
-      email: decoded.email,
+    const user = await db.collection("users").findOne({ 
+      email: decoded.email 
     });
 
     if (user) {
-      // ─── Internal user with account — auto-login ─────────────────
+      // User exists! Generate a regular auth token for auto-login
       const authToken = jwt.sign(
         { id: user._id.toString(), email: user.email },
         requireJwtSecret(),
@@ -56,37 +53,23 @@ export async function POST(req: Request) {
         userId: user._id.toString(),
       });
     } else {
-      // ─── External user without account ───────────────────────────
-      // Reissue the signing token as authToken so the client can use it
-      // for API calls. Same payload/format as the original link token.
-      const authToken = jwt.sign(
-        {
-          type: "document-signing",
-          meetingId: decoded.meetingId,
-          email: decoded.email,
-          name: decoded.name,
-        },
-        requireJwtSecret(),
-        { expiresIn: "30d" }
-      );
-
+      // No account - they need to sign up
       return NextResponse.json({
         hasAccount: false,
-        authToken,
         email: decoded.email,
         name: decoded.name,
       });
     }
   } catch (err: any) {
     console.error("Token validation error:", err);
-
+    
     if (err.name === "TokenExpiredError") {
       return NextResponse.json(
         { error: "Signing link has expired" },
         { status: 401 }
       );
     }
-
+    
     return NextResponse.json(
       { error: "Invalid or expired token" },
       { status: 401 }
