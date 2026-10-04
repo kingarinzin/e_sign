@@ -8,15 +8,15 @@ import {
   AlertCircle,
   Clock,
   CheckCircle2,
-  Edit3,
   Loader2,
-  Send,
-  User,
+  Bell,
+  LayoutGrid,
+  ChevronRight,
+  FilePlus2,
+  PenSquare,
+  UserPlus,
 } from "lucide-react";
 
-// Lazy-load the PDF preview modal.
-// react-pdf + pdfjs-dist (~1MB) only downloads when this component mounts,
-// which only happens when the user opens a preview.
 const PdfPreviewModal = dynamic(
   () => import("@/components/PdfPreviewModal"),
   { ssr: false }
@@ -39,6 +39,15 @@ interface Meeting {
   description?: string;
 }
 
+function shortDate(dateStr?: string): string {
+  if (!dateStr) return "—";
+  return new Date(dateStr).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
 export default function Dashboard() {
   const router = useRouter();
   const [meetings, setMeetings] = useState<Meeting[]>([]);
@@ -54,7 +63,6 @@ export default function Dashboard() {
   const sigInputRef = useRef<HTMLInputElement>(null);
   const initialsInputRef = useRef<HTMLInputElement>(null);
 
-  // ─── pageWidth listener (unchanged) ──────────────────────────
   useEffect(() => {
     const updatePageWidth = () => {
       setPageWidth(Math.min(window.innerWidth * 0.5, 500));
@@ -64,7 +72,6 @@ export default function Dashboard() {
     return () => window.removeEventListener("resize", updatePageWidth);
   }, []);
 
-  // ─── parallel fetch for profile & meetings (unchanged) ───────
   useEffect(() => {
     const token = localStorage.getItem("token");
     if (!token) {
@@ -83,7 +90,6 @@ export default function Dashboard() {
           }),
         ]);
 
-        // Profile
         if (profileRes.status === 401) {
           localStorage.removeItem("token");
           localStorage.removeItem("isAdmin");
@@ -99,7 +105,6 @@ export default function Dashboard() {
             localStorage.setItem("userSignature", data.signature);
         }
 
-        // Meetings
         if (meetingsRes.ok) {
           const data = await meetingsRes.json();
           setMeetings(data.meetings || []);
@@ -115,14 +120,19 @@ export default function Dashboard() {
     fetchAll();
   }, [router]);
 
-  // ─── helper function (unchanged) ──────────────────────────────
   const getSigningProgress = (meeting: Meeting) => {
     const signers = meeting.participants.filter((p) => p.signed !== undefined);
     const signed = signers.filter((p) => p.signed).length;
     return { signed, total: signers.length };
   };
 
-  // ─── useMemo for derived data (unchanged) ─────────────────────
+  const getDraftedBy = (meeting: Meeting) => {
+    if (meeting.participants && meeting.participants.length > 0) {
+      return meeting.participants[0].email;
+    }
+    return "unknown@acc.org.bd";
+  };
+
   const needToSign = useMemo(() => {
     if (!userEmail) return [];
     return meetings.filter((m) => {
@@ -178,15 +188,18 @@ export default function Dashboard() {
       .slice(0, 5);
   }, [meetings]);
 
-  // ─── getDraftedBy (unchanged) ─────────────────────────────────
-  const getDraftedBy = (meeting: Meeting) => {
-    if (meeting.participants && meeting.participants.length > 0) {
-      return meeting.participants[0].email;
-    }
-    return "unknown@acc.org.bd";
-  };
+  const recentDrafts = useMemo(() => {
+    return [...drafts]
+      .sort((a, b) => {
+        const dateA = a.createdAt || "";
+        const dateB = b.createdAt || "";
+        return new Date(dateB).getTime() - new Date(dateA).getTime();
+      })
+      .slice(0, 4);
+  }, [drafts]);
 
-  // ─── handleFileChange (unchanged) ─────────────────────────────
+  const gaugeMax = Math.max(sentThisMonth, 4);
+
   const handleFileChange = async (
     e: React.ChangeEvent<HTMLInputElement>,
     type: "signature" | "initials"
@@ -227,398 +240,407 @@ export default function Dashboard() {
     reader.readAsDataURL(file);
   };
 
-  // ─── handlePreviewDocument (simplified — PDF fetch moved to modal) ──
   const handlePreviewDocument = (meeting: Meeting) => {
     setPreviewMeeting(meeting);
   };
 
-  // ─── closePreview (simplified — cleanup handled inside modal) ──
   const closePreview = () => {
     setPreviewMeeting(null);
   };
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center h-96">
-        <Loader2 className="animate-spin text-indigo-600" size={40} />
+      <div className="space-y-5">
+        <div className="h-8 w-40 bg-gray-200 rounded animate-pulse" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {[1, 2, 3, 4].map((i) => (
+            <div
+              key={i}
+              className="h-32 bg-white border border-gray-200 rounded-lg animate-pulse"
+            />
+          ))}
+        </div>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className="h-56 bg-white border border-gray-200 rounded-lg animate-pulse" />
+          <div className="h-56 bg-white border border-gray-200 rounded-lg animate-pulse" />
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="space-y-6">
-      {/* Sticky Header */}
-      <div className="sticky top-0 z-10 bg-[#f8f9fc] pb-4 -mt-2 pt-2">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+    <div className="space-y-4 pb-12">
+      <div className="sticky top-0 z-20 bg-[#f8f9fc] pb-3 -mt-2 pt-2">
+        <div className="flex justify-between items-center">
           <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
           <button
-            onClick={() => router.push("/dashboard/new-meeting")}
-            className="bg-[#1a2b4a] cursor-pointer text-white px-4 py-2 rounded text-sm font-medium flex items-center gap-2 hover:bg-[#2a3b5a] transition w-fit"
+            onClick={() => {}}
+            className="relative p-2 hover:bg-gray-100 rounded-full transition cursor-pointer"
+            title="Notifications"
           >
-            New Document +
+            <Bell size={18} className="text-gray-600" />
+            {needToSign.length > 0 && (
+              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-red-500 rounded-full" />
+            )}
           </button>
         </div>
       </div>
 
-      {/* Need to sign alert */}
-      {needToSign.length > 0 && (
-        <div className="bg-gradient-to-r from-red-50 to-orange-50 border-l-4 border-red-500 rounded-lg p-4 shadow-sm">
-          <div className="flex items-start justify-between">
-            <div className="flex items-start gap-3">
-              <div className="bg-red-500 p-2 rounded-full text-white shrink-0 mt-0.5">
-                <AlertCircle size={18} />
+      {/* ─── 4 Action Cards ─────────────────────────────────── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        <ActionCard
+          icon={<FilePlus2 size={16} />}
+          title="Start A Document"
+          description="Create a new document, send to recipients, and get signatures."
+          buttonLabel="New Document"
+          onClick={() => router.push("/dashboard/new-meeting")}
+        />
+
+        <ActionCard
+          icon={<LayoutGrid size={16} />}
+          title="My Documents"
+          description="Browse all your documents, filter by status, and manage them."
+          buttonLabel="View Documents"
+          onClick={() => router.push("/dashboard/documents")}
+        />
+
+        {/* ⬇️ Sign Pending now redirects to the "I Need to Sign" tab */}
+        <ActionCard
+          icon={<PenSquare size={16} />}
+          title="Sign Pending"
+          description={
+            needToSign.length > 0
+              ? `You have ${needToSign.length} document${
+                  needToSign.length > 1 ? "s" : ""
+                } awaiting your signature.`
+              : "You have no documents awaiting your signature."
+          }
+          buttonLabel={
+            needToSign.length > 0 ? "Start Signing" : "All Caught Up"
+          }
+          disabled={needToSign.length === 0}
+          onClick={() =>
+            router.push("/dashboard/documents?tab=need-to-sign")
+          }
+        />
+
+        <ActionCard
+          icon={<UserPlus size={16} />}
+          title="Add A Contact"
+          description="Manage users and contacts for faster document sending."
+          buttonLabel="Manage Users"
+          onClick={() => router.push("/admin/all-users")}
+        />
+      </div>
+
+      {/* ─── Documents + Recent Activity ─────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 flex justify-between items-center">
+            <h3 className="text-sm font-bold text-gray-800">Documents</h3>
+            <button
+              onClick={() => router.push("/dashboard/documents")}
+              className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer"
+            >
+              View All Documents
+            </button>
+          </div>
+          <div className="divide-y divide-gray-100">
+            <StatusRow
+              icon={<AlertCircle size={14} />}
+              bg="bg-red-500"
+              label="Awaiting my signature"
+              count={needToSign.length}
+              onClick={() =>
+                router.push("/dashboard/documents?tab=need-to-sign")
+              }
+            />
+            <StatusRow
+              icon={<Clock size={14} />}
+              bg="bg-gray-500"
+              label="Waiting for others"
+              count={waitingForOthersCount}
+              onClick={() => router.push("/dashboard/documents")}
+            />
+            <StatusRow
+              icon={<CheckCircle2 size={14} />}
+              bg="bg-green-600"
+              label="Completed"
+              count={completedCount}
+              onClick={() => router.push("/dashboard/documents")}
+            />
+          </div>
+        </div>
+
+        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 flex justify-between items-center">
+            <h3 className="text-sm font-bold text-gray-800">
+              Recent Activity
+            </h3>
+            <button
+              onClick={() => router.push("/dashboard/documents")}
+              className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer"
+            >
+              View All Activity
+            </button>
+          </div>
+          <div className="divide-y divide-gray-100">
+            {recentDocuments.length === 0 ? (
+              <div className="px-4 py-8 text-center text-xs text-gray-400">
+                No recent activity
               </div>
-              <div>
-                <h3 className="text-sm font-semibold text-red-900 mb-1">
-                  {needToSign.length} Document{needToSign.length > 1 ? "s" : ""}{" "}
-                  Awaiting Your Signature
-                </h3>
-                <p className="text-xs text-red-800 mb-3">
-                  You have pending documents that require your signature
-                </p>
-                <div className="space-y-2">
-                  {needToSign.map((meeting) => (
-                    <div
-                      key={meeting._id}
-                      onClick={() => handlePreviewDocument(meeting)}
-                      className="flex items-center justify-between bg-white rounded-lg p-3 hover:bg-red-50 cursor-pointer transition-all group border border-gray-200 hover:border-red-300"
-                    >
-                      <div className="flex items-center gap-3">
-                        <Edit3 size={14} className="text-red-500" />
-                        <div>
-                          <span className="text-sm font-medium text-gray-800 group-hover:text-red-900">
+            ) : (
+              recentDocuments.slice(0, 5).map((meeting) => {
+                const progress = getSigningProgress(meeting);
+                return (
+                  <button
+                    key={meeting._id}
+                    onClick={() => handlePreviewDocument(meeting)}
+                    className="w-full text-left px-4 py-3 hover:bg-gray-50 transition cursor-pointer group"
+                  >
+                    <div className="flex justify-between items-start gap-3">
+                      <div className="flex flex-col flex-1 min-w-0">
+                        <div className="flex items-baseline gap-2 flex-wrap">
+                          <span className="text-[11px] font-medium text-gray-500 whitespace-nowrap">
+                            {shortDate(meeting.sentAt || meeting.createdAt)}
+                          </span>
+                          <span className="text-sm font-medium text-gray-800 truncate group-hover:text-indigo-700">
                             {meeting.title}
                           </span>
-                          <div className="text-[10px] text-gray-500 mt-0.5">
-                            {meeting.sentAt
-                              ? `Sent ${new Date(
-                                  meeting.sentAt
-                                ).toLocaleDateString()}`
-                              : "Pending signature"}
-                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                          <span className="text-[10px] text-gray-500 truncate">
+                            drafted by {getDraftedBy(meeting)}
+                          </span>
+
+                          {meeting.status === "Completed" && (
+                            <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-semibold whitespace-nowrap">
+                              ✓ Completed
+                            </span>
+                          )}
+
+                          {meeting.status === "Sent" && (
+                            <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-semibold whitespace-nowrap">
+                              {progress.signed}/{progress.total} signed
+                            </span>
+                          )}
+
+                          {meeting.status === "Draft" && (
+                            <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full font-semibold whitespace-nowrap">
+                              Draft
+                            </span>
+                          )}
                         </div>
                       </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          router.push(`/sign/${meeting._id}`);
-                        }}
-                        className="bg-red-500 text-white text-xs px-4 py-2 rounded-lg font-medium hover:bg-red-600 transition-colors flex items-center gap-1 cursor-pointer"
-                      >
-                        Sign Now →
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
-      {/* Two column layout */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Left Column - Documents Section */}
-        <div className="lg:col-span-2 space-y-6">
-          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-            <div className="px-5 py-3 bg-gray-50 border-b border-gray-200">
-              <h3 className="text-sm font-semibold text-gray-800">Documents</h3>
-            </div>
-            <div className="divide-y divide-gray-100">
-              <div className="flex items-center justify-between px-5 py-3 hover:bg-gray-50 transition">
-                <div className="flex items-center gap-3">
-                  <div className="bg-red-500 p-1.5 rounded text-white">
-                    <AlertCircle size={16} />
-                  </div>
-                  <span className="text-sm font-medium text-gray-800">
-                    Waiting my signature
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-sm font-semibold text-gray-900">
-                    {needToSign.length}
-                  </span>
-                  <button className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
-                    Show all →
-                  </button>
-                </div>
-              </div>
-              <div className="flex items-center justify-between px-5 py-3 hover:bg-gray-50 transition">
-                <div className="flex items-center gap-3">
-                  <div className="bg-gray-500 p-1.5 rounded text-white">
-                    <Clock size={16} />
-                  </div>
-                  <span className="text-sm font-medium text-gray-800">
-                    Waiting for others
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-sm font-semibold text-gray-900">
-                    {waitingForOthersCount}
-                  </span>
-                  <button className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
-                    Show all →
-                  </button>
-                </div>
-              </div>
-              <div className="flex items-center justify-between px-5 py-3 hover:bg-gray-50 transition">
-                <div className="flex items-center gap-3">
-                  <div className="bg-green-600 p-1.5 rounded text-white">
-                    <CheckCircle2 size={16} />
-                  </div>
-                  <span className="text-sm font-medium text-gray-800">
-                    Completed
-                  </span>
-                </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-sm font-semibold text-gray-900">
-                    {completedCount}
-                  </span>
-                  <button className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
-                    Show all →
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-            <div className="px-5 py-3 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
-              <h3 className="text-sm font-semibold text-gray-800">
-                Recent Activity
-              </h3>
-              <button className="text-xs text-indigo-600 hover:text-indigo-800 font-medium">
-                Show all →
-              </button>
-            </div>
-            <div className="divide-y divide-gray-100">
-              {recentDocuments.length > 0 ? (
-                recentDocuments.map((meeting) => {
-                  const progress = getSigningProgress(meeting);
-                  return (
-                    <div
-                      key={meeting._id}
-                      onClick={() => handlePreviewDocument(meeting)}
-                      className="px-5 py-3 hover:bg-gray-50 cursor-pointer transition group"
-                    >
-                      <div className="flex justify-between items-start">
-                        <div className="flex flex-col flex-1">
-                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-                            <span className="text-xs text-gray-500">
-                              {new Date(
-                                meeting.sentAt || meeting.createdAt || ""
-                              ).toLocaleDateString("en-US", {
-                                month: "short",
-                                day: "numeric",
-                                year: "numeric",
-                              })}
-                            </span>
-                            <span className="font-medium text-gray-800 group-hover:text-indigo-700">
-                              {meeting.title}
-                            </span>
-                            <span className="text-xs text-gray-500">
-                              drafted by {getDraftedBy(meeting)}
-                            </span>
-                          </div>
-                          <div className="flex items-center gap-3 mt-1">
-                            {meeting.status === "Completed" && (
-                              <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full">
-                                Completed
-                              </span>
-                            )}
-                            {meeting.status === "Sent" && (
-                              <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full">
-                                {progress.signed}/{progress.total} signed
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                        <button className="text-xs text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity ml-2">
-                          View →
-                        </button>
-                      </div>
+                      <ChevronRight
+                        size={14}
+                        className="text-gray-300 shrink-0 mt-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                      />
                     </div>
-                  );
-                })
-              ) : (
-                <div className="px-5 py-8 text-center text-gray-400 text-xs">
-                  No documents to display
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-
-        {/* Right Column */}
-        <div className="space-y-6">
-          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-            <div className="px-5 py-3 bg-gray-50 border-b border-gray-200">
-              <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
-                <User size={16} /> My Signature
-              </h3>
-            </div>
-            <div className="p-5">
-              <div className="text-center mb-4">
-                <div className="text-base font-semibold text-gray-900">
-                  {userName}
-                </div>
-                <div className="text-xs text-gray-500 mt-1">{userEmail}</div>
-              </div>
-              <div
-                onClick={() => sigInputRef.current?.click()}
-                className="bg-gray-50 border border-gray-200 rounded-lg p-3 mb-3 cursor-pointer hover:bg-gray-100 transition group"
-              >
-                <input
-                  type="file"
-                  ref={sigInputRef}
-                  className="hidden"
-                  accept="image/*"
-                  onChange={(e) => handleFileChange(e, "signature")}
-                />
-                <div className="flex justify-between items-center">
-                  <span className="text-xs font-medium text-gray-700">
-                    Signature
-                  </span>
-                  <button className="text-xs text-indigo-600 group-hover:underline">
-                    Edit
                   </button>
-                </div>
-                <div className="flex justify-center mt-2 min-h-[50px]">
-                  {signatureImg ? (
-                    <img
-                      src={signatureImg}
-                      alt="Signature"
-                      className="max-h-12 object-contain"
-                    />
-                  ) : (
-                    <div className="flex flex-col items-center text-gray-400">
-                      <Upload size={20} />
-                      <span className="text-[10px] mt-1">Click to upload</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-              <div
-                onClick={() => initialsInputRef.current?.click()}
-                className="bg-gray-50 border border-gray-200 rounded-lg p-3 cursor-pointer hover:bg-gray-100 transition group"
-              >
-                <input
-                  type="file"
-                  ref={initialsInputRef}
-                  className="hidden"
-                  accept="image/*"
-                  onChange={(e) => handleFileChange(e, "initials")}
-                />
-                <div className="flex justify-between items-center">
-                  <span className="text-xs font-medium text-gray-700">
-                    Initials
-                  </span>
-                  <button className="text-xs text-indigo-600 group-hover:underline">
-                    Edit
-                  </button>
-                </div>
-                <div className="flex justify-center mt-2 min-h-[40px]">
-                  {initialsImg ? (
-                    <img
-                      src={initialsImg}
-                      alt="Initials"
-                      className="max-h-10 object-contain"
-                    />
-                  ) : (
-                    <div className="flex flex-col items-center text-gray-400">
-                      <Upload size={16} />
-                      <span className="text-[10px] mt-1">Click to upload</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-              {isUploading && (
-                <div className="text-xs text-gray-500 flex items-center justify-center gap-2 mt-3">
-                  <Loader2 className="animate-spin" size={14} /> Uploading...
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-            <div className="px-5 py-3 bg-gray-50 border-b border-gray-200">
-              <h3 className="text-sm font-semibold text-gray-800 flex items-center gap-2">
-                <Send size={16} /> Documents Sent This Month
-              </h3>
-            </div>
-            <div className="p-5">
-              <div className="text-center">
-                <div className="text-3xl font-bold text-indigo-600">
-                  {sentThisMonth}
-                </div>
-                <div className="text-xs text-gray-500 mt-1">
-                  sent this month
-                </div>
-                <div className="mt-3 pt-3 border-t border-gray-100">
-                  <div className="text-sm text-gray-700">
-                    Total sent: <span className="font-semibold">{totalSent}</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
-            <div className="px-5 py-3 bg-gray-50 border-b border-gray-200 flex justify-between items-center">
-              <h3 className="text-sm font-semibold text-gray-800">
-                Recent Drafts
-              </h3>
-              {drafts.length > 0 && (
-                <button
-                  onClick={() => router.push("/dashboard/drafts")}
-                  className="text-xs text-indigo-600 hover:text-indigo-800 font-medium"
-                >
-                  View All Drafts →
-                </button>
-              )}
-            </div>
-            <div className="divide-y divide-gray-100">
-              {drafts.length > 0 ? (
-                drafts.slice(0, 4).map((draft) => (
-                  <div
-                    key={draft._id}
-                    onClick={() =>
-                      router.push(`/dashboard/meetings/${draft._id}/edit`)
-                    }
-                    className="px-5 py-3 hover:bg-gray-50 cursor-pointer transition group"
-                  >
-                    <div className="flex justify-between items-center">
-                      <div className="flex items-center gap-2">
-                        <Edit3
-                          size={12}
-                          className="text-gray-400 group-hover:text-indigo-600"
-                        />
-                        <span className="text-sm font-medium text-gray-800 group-hover:text-indigo-700">
-                          {draft.title}
-                        </span>
-                      </div>
-                      <span className="text-[10px] text-gray-400">
-                        {draft.createdAt
-                          ? new Date(draft.createdAt).toLocaleDateString(
-                              "en-US",
-                              { month: "short", day: "numeric" }
-                            )
-                          : ""}
-                      </span>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="px-5 py-8 text-center text-gray-400 text-xs">
-                  No drafts to show
-                </div>
-              )}
-            </div>
+                );
+              })
+            )}
           </div>
         </div>
       </div>
 
-      {/* PDF Preview Modal — lazy-loaded on demand */}
+      {/* ─── My Signature + Gauge + Info ─────────────────────── */}
+      <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+        <div className="grid grid-cols-1 md:grid-cols-3 divide-y md:divide-y-0 md:divide-x divide-gray-100">
+          <div className="p-5 space-y-5">
+            <div>
+              <div className="flex justify-between items-center mb-2">
+                <h4 className="text-sm font-bold text-gray-800">
+                  My Signature
+                </h4>
+                <button
+                  onClick={() => sigInputRef.current?.click()}
+                  className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer"
+                >
+                  Edit
+                </button>
+              </div>
+              <input
+                type="file"
+                ref={sigInputRef}
+                className="hidden"
+                accept="image/*"
+                onChange={(e) => handleFileChange(e, "signature")}
+              />
+              <div
+                onClick={() => sigInputRef.current?.click()}
+                className="border border-dashed border-gray-200 rounded-lg p-3 bg-gray-50 hover:bg-gray-100 transition cursor-pointer flex items-center justify-center min-h-[70px]"
+              >
+                {signatureImg ? (
+                  <img
+                    src={signatureImg}
+                    alt="Signature"
+                    className="max-h-14 object-contain"
+                  />
+                ) : (
+                  <div className="flex flex-col items-center text-gray-400">
+                    <Upload size={18} />
+                    <span className="text-[10px] mt-1">Click to upload</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div>
+              <div className="flex justify-between items-center mb-2">
+                <h4 className="text-sm font-bold text-gray-800">
+                  My Initials
+                </h4>
+                <button
+                  onClick={() => initialsInputRef.current?.click()}
+                  className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer"
+                >
+                  Edit
+                </button>
+              </div>
+              <input
+                type="file"
+                ref={initialsInputRef}
+                className="hidden"
+                accept="image/*"
+                onChange={(e) => handleFileChange(e, "initials")}
+              />
+              <div
+                onClick={() => initialsInputRef.current?.click()}
+                className="border border-dashed border-gray-200 rounded-lg p-3 bg-gray-50 hover:bg-gray-100 transition cursor-pointer flex items-center justify-center min-h-[60px]"
+              >
+                {initialsImg ? (
+                  <img
+                    src={initialsImg}
+                    alt="Initials"
+                    className="max-h-12 object-contain"
+                  />
+                ) : (
+                  <div className="flex flex-col items-center text-gray-400">
+                    <Upload size={14} />
+                    <span className="text-[10px] mt-1">Click to upload</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {isUploading && (
+              <div className="text-xs text-gray-500 flex items-center gap-2">
+                <Loader2 className="animate-spin" size={12} /> Uploading...
+              </div>
+            )}
+          </div>
+
+          <div className="p-5 flex flex-col items-center justify-center">
+            <h4 className="text-sm font-bold text-gray-800 mb-4 text-center">
+              Documents sent this month
+            </h4>
+            <GaugeChart value={sentThisMonth} max={gaugeMax} />
+            <div className="mt-3 text-center">
+              <div className="text-lg font-bold text-gray-900">
+                {sentThisMonth}
+              </div>
+              <div className="text-[11px] text-gray-500">Documents Sent</div>
+            </div>
+          </div>
+
+          <div className="divide-y divide-gray-100">
+            <InfoBlock
+              title="Account"
+              lines={[
+                `Name: ${userName}`,
+                `Email: ${userEmail || "—"}`,
+                `Total documents: ${meetings.length}`,
+              ]}
+            />
+            <InfoBlock
+              title="Activity"
+              lines={[
+                `Completed: ${completedCount}`,
+                `Pending my signature: ${needToSign.length}`,
+                `Waiting for others: ${waitingForOthersCount}`,
+              ]}
+            />
+            <InfoBlock
+              title="This Month"
+              lines={[
+                `Sent: ${sentThisMonth}`,
+                `Total sent (all time): ${totalSent}`,
+                `Drafts: ${drafts.length}`,
+              ]}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* ─── Templates + Recent Drafts ───────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 flex justify-between items-center">
+            <h3 className="text-sm font-bold text-gray-800">
+              Most Used Templates
+            </h3>
+            <button
+              disabled
+              className="text-xs text-gray-400 font-semibold cursor-not-allowed"
+            >
+              View All Templates
+            </button>
+          </div>
+          <div className="px-4 py-10 text-center">
+            <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
+              <LayoutGrid size={20} className="text-gray-400" />
+            </div>
+            <p className="text-xs text-gray-500">
+              You haven't used any templates yet.
+            </p>
+          </div>
+        </div>
+
+        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 flex justify-between items-center">
+            <h3 className="text-sm font-bold text-gray-800">Recent drafts</h3>
+            {drafts.length > 0 && (
+              <button
+                onClick={() => router.push("/dashboard/documents")}
+                className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer"
+              >
+                View All Drafts
+              </button>
+            )}
+          </div>
+          <div className="divide-y divide-gray-100">
+            {recentDrafts.length === 0 ? (
+              <div className="px-4 py-8 text-center text-xs text-gray-400">
+                No drafts yet
+              </div>
+            ) : (
+              recentDrafts.map((draft) => (
+                <button
+                  key={draft._id}
+                  onClick={() =>
+                    router.push(`/dashboard/prepare/${draft._id}`)
+                  }
+                  className="w-full text-left px-4 py-3 hover:bg-gray-50 transition cursor-pointer"
+                >
+                  <div className="flex justify-between items-center gap-3">
+                    <span className="text-sm text-gray-800 truncate">
+                      {draft.title}
+                    </span>
+                    <span className="text-[11px] text-gray-500 whitespace-nowrap">
+                      {shortDate(draft.createdAt)}
+                    </span>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+
       {previewMeeting && (
         <PdfPreviewModal
           meeting={previewMeeting}
@@ -628,5 +650,171 @@ export default function Dashboard() {
         />
       )}
     </div>
+  );
+}
+
+// ─── ActionCard ────────────────────────────────────────────────
+function ActionCard({
+  icon,
+  title,
+  description,
+  buttonLabel,
+  onClick,
+  disabled,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  buttonLabel: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <div className="bg-white border border-gray-200 rounded-lg p-4 flex flex-col hover:shadow-md transition">
+      <div className="flex items-center gap-2 mb-2">
+        <span className="text-indigo-600">{icon}</span>
+        <h3 className="text-sm font-bold text-gray-900">{title}</h3>
+      </div>
+      <p className="text-xs text-gray-500 leading-relaxed flex-1 mb-4">
+        {description}
+      </p>
+      <button
+        onClick={onClick}
+        disabled={disabled}
+        className={`text-xs font-semibold px-3 py-1.5 rounded-md transition w-fit cursor-pointer ${
+          disabled
+            ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+            : "bg-white border border-indigo-300 text-indigo-700 hover:bg-indigo-50"
+        }`}
+      >
+        {buttonLabel}
+      </button>
+    </div>
+  );
+}
+
+// ─── StatusRow ─────────────────────────────────────────────────
+function StatusRow({
+  icon,
+  bg,
+  label,
+  count,
+  onClick,
+}: {
+  icon: React.ReactNode;
+  bg: string;
+  label: string;
+  count: number;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="w-full text-left px-4 py-3 flex items-center justify-between hover:bg-gray-50 transition cursor-pointer"
+    >
+      <div className="flex items-center gap-3">
+        <span
+          className={`w-7 h-7 rounded-md flex items-center justify-center text-white ${bg}`}
+        >
+          {icon}
+        </span>
+        <span className="text-sm text-gray-800">{label}</span>
+      </div>
+      <div className="flex items-center gap-3">
+        {count > 0 && (
+          <span className="text-sm font-bold text-gray-900">{count}</span>
+        )}
+        <span className="text-xs text-indigo-600 font-semibold">
+          Show all
+        </span>
+      </div>
+    </button>
+  );
+}
+
+// ─── InfoBlock ─────────────────────────────────────────────────
+function InfoBlock({ title, lines }: { title: string; lines: string[] }) {
+  return (
+    <div className="px-5 py-4">
+      <h4 className="text-sm font-bold text-gray-800 mb-1.5">{title}</h4>
+      {lines.map((line, i) => (
+        <p key={i} className="text-xs text-gray-600 leading-relaxed">
+          {line}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+// ─── GaugeChart ────────────────────────────────────────────────
+function GaugeChart({ value, max }: { value: number; max: number }) {
+  const pct = max > 0 ? Math.min(value / max, 1) : 0;
+  const radius = 55;
+  const strokeWidth = 14;
+  const cx = 75;
+  const cy = 75;
+  const circumference = Math.PI * radius;
+  const dashoffset = circumference * (1 - pct);
+
+  return (
+    <svg width="150" height="85" viewBox="0 0 150 85">
+      <path
+        d={`M ${cx - radius} ${cy} A ${radius} ${radius} 0 0 1 ${
+          cx + radius
+        } ${cy}`}
+        fill="none"
+        stroke="#E5E7EB"
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+      />
+      <path
+        d={`M ${cx - radius} ${cy} A ${radius} ${radius} 0 0 1 ${
+          cx + radius
+        } ${cy}`}
+        fill="none"
+        stroke="#4F46E5"
+        strokeWidth={strokeWidth}
+        strokeLinecap="round"
+        strokeDasharray={circumference}
+        strokeDashoffset={dashoffset}
+        style={{ transition: "stroke-dashoffset 0.6s ease" }}
+      />
+      <text
+        x={cx}
+        y={cy - 6}
+        textAnchor="middle"
+        className="fill-gray-900"
+        style={{ fontSize: "20px", fontWeight: "bold" }}
+      >
+        {value}
+      </text>
+      <text
+        x={cx}
+        y={cy + 10}
+        textAnchor="middle"
+        className="fill-gray-500"
+        style={{ fontSize: "9px" }}
+      >
+        Documents Sent
+      </text>
+      <text
+        x={cx - radius - 4}
+        y={cy + 14}
+        textAnchor="middle"
+        className="fill-gray-400"
+        style={{ fontSize: "9px" }}
+      >
+        0
+      </text>
+      <text
+        x={cx + radius + 4}
+        y={cy + 14}
+        textAnchor="middle"
+        className="fill-gray-400"
+        style={{ fontSize: "9px" }}
+      >
+        {max}
+      </text>
+    </svg>
   );
 }

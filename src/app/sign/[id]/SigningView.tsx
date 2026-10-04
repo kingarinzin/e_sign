@@ -7,7 +7,6 @@ import {
   Loader2,
   Send,
   PenTool,
-  CheckCircle2,
   AlertCircle,
   Layers,
 } from "lucide-react";
@@ -15,7 +14,6 @@ import SuccessModal from "@/components/SuccessModal";
 
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
-// ─── Color palette — must match Prepare page ─────────────────────
 const RECIPIENT_COLORS = [
   "#4F46E5", "#DC2626", "#16A34A", "#D97706", "#7C3AED", "#0891B2",
   "#DB2777", "#2563EB", "#65A30D", "#0D9488", "#EA580C", "#6366F1",
@@ -60,12 +58,23 @@ export default function SigningView({
 }) {
   const router = useRouter();
 
+  // ─── Read returnTo from URL on mount ──────────────────────────
+  // Uses window.location.search directly (not useSearchParams) to
+  // avoid needing a Suspense boundary inside this dynamic component.
+  const [returnTo, setReturnTo] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      setReturnTo(params.get("returnTo"));
+    }
+  }, []);
+
   const [numPages, setNumPages] = useState(0);
   const [blobUrl, setBlobUrl] = useState("");
   const [loading, setLoading] = useState(true);
   const [signing, setSigning] = useState(false);
 
-  // Auth token resolution
   const getAuthToken = () =>
     signingToken || localStorage.getItem("token");
 
@@ -83,16 +92,15 @@ export default function SigningView({
   // UI state
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [signSuccessMessage, setSignSuccessMessage] = useState("");
+  const [signCompletedAll, setSignCompletedAll] = useState(false);
   const [signatureError, setSignatureError] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  // Filled placeholder IDs (from meeting.fields)
+  // Filled placeholders
   const [filledIds, setFilledIds] = useState<Set<string>>(new Set());
-
-  // Auto-applied initials (Option B) — one per page where signer clicked "Apply to All"
   const [autoInitials, setAutoInitials] = useState<AutoInitial[]>([]);
 
-  // ─── Derived: does the meeting have signing placeholders? ─────
+  // ─── Derived data ─────────────────────────────────────────────
   const hasSigningFields = useMemo(() => {
     return (
       Array.isArray(meeting?.fields) &&
@@ -102,7 +110,6 @@ export default function SigningView({
     );
   }, [meeting?.fields]);
 
-  // ─── Recipient color map (matches prepare page) ───────────────
   const recipientColorMap = useMemo(() => {
     const map: Record<string, string> = {};
     const participants = meeting?.participants || [];
@@ -112,7 +119,6 @@ export default function SigningView({
     return map;
   }, [meeting?.participants]);
 
-  // ─── My participant record ────────────────────────────────────
   const myParticipant = useMemo(() => {
     if (!currentUser?.email || !meeting?.participants) return null;
     return meeting.participants.find(
@@ -120,11 +126,6 @@ export default function SigningView({
     );
   }, [meeting?.participants, currentUser?.email]);
 
-  const myColor = myParticipant
-    ? recipientColorMap[myParticipant.name] || "#4F46E5"
-    : "#4F46E5";
-
-  // ─── My fields + signable fields ──────────────────────────────
   const myFields = useMemo(() => {
     if (!myParticipant || !Array.isArray(meeting?.fields)) return [];
     return meeting.fields.filter(
@@ -140,7 +141,6 @@ export default function SigningView({
     [myFields]
   );
 
-  // ─── Progress ─────────────────────────────────────────────────
   const filledSignableCount = useMemo(
     () => mySignableFields.filter((f: Field) => filledIds.has(f.id)).length,
     [mySignableFields, filledIds]
@@ -148,10 +148,8 @@ export default function SigningView({
 
   const totalToFill = mySignableFields.length;
 
-  const allFilled =
-    totalToFill > 0 && filledSignableCount === totalToFill;
+  const allFilled = totalToFill > 0 && filledSignableCount === totalToFill;
 
-  // ─── Did the signer fill at least one initials placeholder? ───
   const hasFilledInitials = useMemo(
     () =>
       myFields.some(
@@ -160,7 +158,7 @@ export default function SigningView({
     [myFields, filledIds]
   );
 
-  // ─── Fetch PDF ─────────────────────────────────────────────────
+  // ─── Fetch PDF ────────────────────────────────────────────────
   useEffect(() => {
     async function fetchPdf() {
       try {
@@ -182,7 +180,7 @@ export default function SigningView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [meetingId]);
 
-  // ─── Load saved signatures (internal users only) ──────────────
+  // ─── Load saved signatures (internal only) ────────────────────
   useEffect(() => {
     async function loadSignatures() {
       if (currentUser?.isExternal) return;
@@ -206,7 +204,7 @@ export default function SigningView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.isExternal]);
 
-  // ─── Drawing functions (signature) ────────────────────────────
+  // ─── Drawing handlers (signature) ─────────────────────────────
   const startDrawing = (
     e:
       | React.MouseEvent<HTMLCanvasElement>
@@ -263,9 +261,7 @@ export default function SigningView({
     if (!canvas) return;
     const dataUrl = canvas.toDataURL("image/png");
     setUserSignature(dataUrl);
-
     if (currentUser?.isExternal) return;
-
     const token = getAuthToken();
     await fetch("/api/user/update-signature", {
       method: "POST",
@@ -277,7 +273,6 @@ export default function SigningView({
     });
   };
 
-  // ─── Drawing functions (initials) ─────────────────────────────
   const startInitialDrawing = (
     e:
       | React.MouseEvent<HTMLCanvasElement>
@@ -334,9 +329,7 @@ export default function SigningView({
     if (!canvas) return;
     const dataUrl = canvas.toDataURL("image/png");
     setUserInitialSignature(dataUrl);
-
     if (currentUser?.isExternal) return;
-
     const token = getAuthToken();
     await fetch("/api/user/update-signature", {
       method: "POST",
@@ -348,13 +341,12 @@ export default function SigningView({
     });
   };
 
-  // ─── Placeholder click handler ────────────────────────────────
+  // ─── Placeholder click ────────────────────────────────────────
   const handlePlaceholderClick = (field: Field) => {
     if (!myParticipant) return;
 
     const isFilled = filledIds.has(field.id);
 
-    // Click on filled → undo
     if (isFilled) {
       if (!confirm("Remove from this placeholder?")) return;
       setFilledIds((prev) => {
@@ -365,12 +357,10 @@ export default function SigningView({
       return;
     }
 
-    // Fill signature placeholder
     if (field.type === "signature") {
       const sig =
         userSignature ||
         (hasDrawnSignature ? canvasRef.current?.toDataURL("image/png") : null);
-
       if (!sig) {
         setSignatureError("Please draw your signature in the sidebar first.");
         window.scrollTo({ top: 0, behavior: "smooth" });
@@ -381,7 +371,6 @@ export default function SigningView({
       setFilledIds((prev) => {
         const next = new Set(prev);
         next.add(field.id);
-        // Auto-fill name + date on the same page
         myFields
           .filter(
             (f: Field) =>
@@ -398,13 +387,13 @@ export default function SigningView({
         (hasDrawnInitialSignature
           ? initialCanvasRef.current?.toDataURL("image/png")
           : null);
-
       if (!init) {
         setSignatureError("Please draw your initials in the sidebar first.");
         window.scrollTo({ top: 0, behavior: "smooth" });
         return;
       }
-      if (hasDrawnInitialSignature && !userInitialSignature) saveInitialSignature();
+      if (hasDrawnInitialSignature && !userInitialSignature)
+        saveInitialSignature();
 
       setFilledIds((prev) => {
         const next = new Set(prev);
@@ -421,24 +410,20 @@ export default function SigningView({
     }
   };
 
-  // ─── Apply initials to all pages (Option B) ───────────────────
+  // ─── Apply initials to all pages ──────────────────────────────
   const applyInitialsToAllPages = () => {
-    // Find a filled initials placeholder to use as template
     const filledInitial = myFields.find(
       (f: Field) => f.type === "initial" && filledIds.has(f.id)
     );
-
     if (!filledInitial) {
       alert("Please fill your initials placeholder first.");
       return;
     }
-
     if (!userInitialSignature && !hasDrawnInitialSignature) {
       alert("Please draw your initials first.");
       return;
     }
 
-    // Build list of pages that already have initials
     const pagesWithInitials = new Set<number>([
       ...myFields
         .filter((f: Field) => f.type === "initial" && filledIds.has(f.id))
@@ -467,27 +452,25 @@ export default function SigningView({
 
     if (!confirm(`Apply initials to ${newEntries.length} more page(s)?`)) return;
 
-    if (hasDrawnInitialSignature && !userInitialSignature) {
+    if (hasDrawnInitialSignature && !userInitialSignature)
       saveInitialSignature();
-    }
 
     setAutoInitials((prev) => [...prev, ...newEntries]);
   };
 
-  // ─── Remove an auto-applied initials ──────────────────────────
   const removeAutoInitial = (id: string) => {
     setAutoInitials((prev) => prev.filter((a) => a.id !== id));
   };
 
-  // ─── Handle sign submission ───────────────────────────────────
+  // ─── Submit ───────────────────────────────────────────────────
   const handleSign = async () => {
     setSignatureError("");
     setValidationError(null);
 
     if (hasSigningFields) {
-      // Validate all signable placeholders are filled
-      const unfilled = mySignableFields.filter((f: Field) => !filledIds.has(f.id));
-
+      const unfilled = mySignableFields.filter(
+        (f: Field) => !filledIds.has(f.id)
+      );
       if (unfilled.length > 0) {
         setValidationError(
           `Please fill all your placeholders before signing.\n\nMissing:\n${unfilled
@@ -504,7 +487,6 @@ export default function SigningView({
         return;
       }
 
-      // Build signature + initials positions
       const PAGE_W = 700;
       const PAGE_H = 900;
 
@@ -573,6 +555,7 @@ export default function SigningView({
 
         const data = await res.json();
         setSignSuccessMessage(data.message || "Document signed successfully!");
+        setSignCompletedAll(!!data.allSigned);
         setShowSuccessModal(true);
       } catch (err: any) {
         alert(err.message || "Failed to sign document");
@@ -582,7 +565,6 @@ export default function SigningView({
       return;
     }
 
-    // No placeholders → block
     setValidationError(
       "This document has no signature placeholders. Please contact the organizer."
     );
@@ -596,10 +578,8 @@ export default function SigningView({
     );
   }
 
-  // ─── Render ────────────────────────────────────────────────────
   return (
     <div className="h-screen bg-[#f0f2f5] flex flex-col overflow-hidden">
-      {/* Header */}
       <header className="bg-white border-b px-8 py-4 shadow-sm z-50">
         <div className="max-w-6xl mx-auto flex justify-between items-center">
           <div>
@@ -623,7 +603,6 @@ export default function SigningView({
         </div>
       </header>
 
-      {/* Error banner */}
       {signatureError && (
         <div className="bg-red-50 border-l-4 border-red-500 px-8 py-3 z-40">
           <div className="max-w-6xl mx-auto flex items-center gap-2">
@@ -640,7 +619,6 @@ export default function SigningView({
       )}
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Left: thumbnails */}
         <aside className="w-48 bg-white border-r p-3 overflow-y-auto z-40 shadow-sm flex-shrink-0">
           <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
             Pages
@@ -680,7 +658,6 @@ export default function SigningView({
           )}
         </aside>
 
-        {/* Center: PDF */}
         <main className="flex-1 overflow-auto p-8 flex justify-center bg-[#e2e8f0]">
           <div className="max-w-3xl">
             {blobUrl && (
@@ -712,7 +689,6 @@ export default function SigningView({
                         renderAnnotationLayer={false}
                       />
 
-                      {/* Placeholders */}
                       {pageFields.map((field: Field) => {
                         const isMine =
                           field.recipientName === myParticipant?.name;
@@ -820,15 +796,12 @@ export default function SigningView({
                         );
                       })}
 
-                      {/* Auto-applied initials (Option B) */}
                       {pageAutoInitials.map((a) => (
                         <div
                           key={a.id}
                           onClick={() => {
                             if (
-                              confirm(
-                                "Remove initials from this page?"
-                              )
+                              confirm("Remove initials from this page?")
                             ) {
                               removeAutoInitial(a.id);
                             }
@@ -862,9 +835,7 @@ export default function SigningView({
           </div>
         </main>
 
-        {/* Right Sidebar */}
         <aside className="w-80 bg-white border-l p-6 flex flex-col gap-6 overflow-y-auto shadow-lg flex-shrink-0">
-          {/* Full signature */}
           <div>
             <h3 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
               <PenTool className="w-4 h-4 text-blue-600" />
@@ -929,7 +900,6 @@ export default function SigningView({
             )}
           </div>
 
-          {/* Initials */}
           <div className="border-t pt-4">
             <h3 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
               <PenTool className="w-4 h-4 text-purple-500" />
@@ -993,7 +963,6 @@ export default function SigningView({
               </div>
             )}
 
-            {/* ── Apply Initials to All Pages ── */}
             {hasFilledInitials && numPages > 1 && (
               <button
                 onClick={applyInitialsToAllPages}
@@ -1004,16 +973,15 @@ export default function SigningView({
               </button>
             )}
 
-            {/* Show count if some are already applied */}
             {autoInitials.length > 0 && (
               <p className="mt-2 text-[11px] text-purple-700 bg-purple-50 rounded p-2 text-center">
-                Initials applied to {autoInitials.length + (hasFilledInitials ? 1 : 0)}{" "}
-                page(s). Click any initials to remove.
+                Initials applied to{" "}
+                {autoInitials.length + (hasFilledInitials ? 1 : 0)} page(s).
+                Click any initials to remove.
               </p>
             )}
           </div>
 
-          {/* Progress */}
           {hasSigningFields && mySignableFields.length > 0 && (
             <div className="border-t pt-4">
               <h3 className="text-sm font-bold text-gray-700 mb-3">Progress</h3>
@@ -1044,7 +1012,6 @@ export default function SigningView({
             </div>
           )}
 
-          {/* Signing As */}
           <div className="border-t pt-6">
             <h3 className="text-sm font-bold text-gray-700 mb-3">Signing As</h3>
             <div className="space-y-3 text-sm bg-gray-50 rounded-lg p-4">
@@ -1070,7 +1037,6 @@ export default function SigningView({
         </aside>
       </div>
 
-      {/* Pulse animation */}
       <style jsx global>{`
         @keyframes pulse-border {
           0%,
@@ -1089,14 +1055,30 @@ export default function SigningView({
         message={signSuccessMessage}
         onClose={() => {
           setShowSuccessModal(false);
+
+          // External signer → Thank You page (no dashboard)
           if (currentUser?.isExternal) {
             document.body.innerHTML =
               '<div style="display:flex;align-items:center;justify-content:center;height:100vh;font-family:Arial;color:#374151;"><div style="text-align:center;max-width:480px;padding:24px;"><h1 style="color:#10B981;font-size:28px;margin-bottom:12px;">Thank You for Signing</h1><p style="font-size:16px;line-height:1.6;">Your signature has been recorded successfully.</p><p style="font-size:14px;line-height:1.6;color:#6B7280;margin-top:16px;">Once all signers have completed, the signed document will be sent to your email address.</p><p style="font-size:14px;color:#9CA3AF;margin-top:24px;">You may now close this window.</p></div></div>';
+            return;
+          }
+
+          // Internal signer → smart redirect
+          if (returnTo) {
+            router.push(returnTo);
+          } else if (signCompletedAll) {
+            router.push("/dashboard/documents?tab=completed");
           } else {
-            router.push("/dashboard");
+            router.push("/dashboard/documents?tab=signed");
           }
         }}
-        buttonText={currentUser?.isExternal ? "Done" : "Back to Dashboard"}
+        buttonText={
+          currentUser?.isExternal
+            ? "Done"
+            : signCompletedAll
+            ? "View Completed"
+            : "View My Signed Docs"
+        }
       />
 
       {validationError && (
