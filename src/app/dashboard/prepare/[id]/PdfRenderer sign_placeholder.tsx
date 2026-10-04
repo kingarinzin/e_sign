@@ -108,6 +108,7 @@ export default function PdfRenderer({
   participants,
   selectedRecipient,
   onSelectRecipient,
+  recipientColorMap,
 }: {
   fileUrl: string;
   authToken: string;
@@ -122,6 +123,7 @@ export default function PdfRenderer({
   participants?: Array<{ name: string; email: string }>;
   selectedRecipient?: string | null;
   onSelectRecipient?: (name: string) => void;
+  recipientColorMap?: Record<string, string>;
 }) {
   const [numPages, setNumPages] = useState(0);
   const [pageRects, setPageRects] = useState<Record<number, PageRect>>({});
@@ -201,6 +203,16 @@ export default function PdfRenderer({
     setFields((prev) => prev.filter((f) => f.id !== fieldId));
   };
 
+  const getFieldColor = (recipientName?: string): string => {
+    if (!recipientName || !recipientColorMap) return '#D1D5DB';
+    return recipientColorMap[recipientName] || '#D1D5DB';
+  };
+
+  const getFieldBg = (color: string): string => {
+    if (color.startsWith('#')) return `${color}20`;
+    return 'rgba(209, 213, 219, 0.2)';
+  };
+
   if (!fileUrl) return <div className="p-10 text-gray-600">No file URL found.</div>;
   if (!isPdf) return <div className="p-10 text-gray-600">Prepare mode supports PDFs only.</div>;
   if (loading) return <div className="flex items-center gap-3 p-10"><Loader2 className="animate-spin" /> Loading PDF...</div>;
@@ -226,32 +238,7 @@ export default function PdfRenderer({
               draggingFieldType={draggingFieldType}
               onRect={handlePageRect}
               onDrop={(pg, xPct, yPct) => {
-                if (!draggingFieldType) return;
-
-                const recipientName = selectedRecipient || participants?.[0]?.name || 'Recipient';
-
-                let defaults;
-                if (draggingFieldType === "signature") {
-                  defaults = { wPct: 0.28, hPct: 0.09 };
-                } else if (draggingFieldType === "initial") {
-                  defaults = { wPct: 0.22, hPct: 0.07 };
-                } else if (draggingFieldType === "name") {
-                  defaults = { wPct: 0.28, hPct: 0.07 };
-                } else { // date
-                  defaults = { wPct: 0.22, hPct: 0.07 };
-                }
-
-                const newField: Field = {
-                  id: makeId(),
-                  type: draggingFieldType,
-                  page: pg,
-                  xPct,
-                  yPct,
-                  ...defaults,
-                  recipientName,
-                };
-
-                setFields((prev) => [...prev, newField]);
+                // kept for compatibility, but actual drops are handled below
               }}
             >
               <Page
@@ -259,13 +246,122 @@ export default function PdfRenderer({
                 width={700}
                 renderTextLayer={false}
                 renderAnnotationLayer={false}
+                onLoadSuccess={(page) => {
+                  // ─── FIXED: use w and h, not width/height ─────
+                  setPageRects(prev => ({
+                    ...prev,
+                    [pageNumber]: { w: page.width, h: page.height }
+                  }));
+                }}
               />
 
+              {/* ─── Drop overlay ─────────────────────────────────── */}
+              <div
+                className="absolute inset-0 z-5"
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  if (draggingFieldType || e.dataTransfer.types.includes('text/plain')) {
+                    e.dataTransfer.dropEffect = "copy";
+                  }
+                }}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+
+                  const dragData = e.dataTransfer.getData("text/plain");
+                  const target = e.currentTarget as HTMLElement;
+                  const rect = target.getBoundingClientRect();
+                  const x = e.clientX - rect.left;
+                  const y = e.clientY - rect.top;
+
+                  // ─── Recipient drag ─────────────────────────────
+                  if (dragData.startsWith("recipient:")) {
+                    const recipientName = dragData.replace("recipient:", "");
+                    const newField: Field = {
+                      id: makeId(),
+                      type: "name",
+                      page: pageNumber,
+                      xPct: Math.min(1, Math.max(0, x / rect.width)),
+                      yPct: Math.min(1, Math.max(0, y / rect.height)),
+                      wPct: 0.28,
+                      hPct: 0.07,
+                      recipientName: recipientName,
+                    };
+                    setFields((prev) => [...prev, newField]);
+                    if (onSelectRecipient) onSelectRecipient(recipientName);
+                    return;
+                  }
+
+                  // ─── Standard field types ──────────────────────
+                  const recipientName = selectedRecipient || participants?.[0]?.name || 'Recipient';
+                  const xPct = Math.min(1, Math.max(0, x / rect.width));
+                  const yPct = Math.min(1, Math.max(0, y / rect.height));
+
+                  if (dragData === "initial" && userInitialSignature) {
+                    const newField: Field = {
+                      id: makeId(),
+                      type: "initial",
+                      page: pageNumber,
+                      xPct,
+                      yPct,
+                      wPct: 0.22,
+                      hPct: 0.07,
+                      recipientName,
+                    };
+                    setFields((prev) => [...prev, newField]);
+                  }
+                  else if (dragData === "signature" && userSignature) {
+                    const newField: Field = {
+                      id: makeId(),
+                      type: "signature",
+                      page: pageNumber,
+                      xPct,
+                      yPct,
+                      wPct: 0.28,
+                      hPct: 0.09,
+                      recipientName,
+                    };
+                    setFields((prev) => [...prev, newField]);
+                  }
+                  else if (dragData === "name") {
+                    const newField: Field = {
+                      id: makeId(),
+                      type: "name",
+                      page: pageNumber,
+                      xPct,
+                      yPct,
+                      wPct: 0.28,
+                      hPct: 0.07,
+                      recipientName,
+                    };
+                    setFields((prev) => [...prev, newField]);
+                  }
+                  else if (dragData === "date") {
+                    const newField: Field = {
+                      id: makeId(),
+                      type: "date",
+                      page: pageNumber,
+                      xPct,
+                      yPct,
+                      wPct: 0.22,
+                      hPct: 0.07,
+                      recipientName,
+                    };
+                    setFields((prev) => [...prev, newField]);
+                  }
+                }}
+              />
+
+              {/* ─── Render fields ────────────────────────────────── */}
               <div className="absolute inset-0 z-10 pointer-events-none">
                 {fields
                   .filter((f) => f.page === pageNumber)
                   .map((field) => {
                     const rect = pxFromPct(field.page, field.xPct, field.yPct, field.wPct, field.hPct);
+                    const color = getFieldColor(field.recipientName);
+                    const bgColor = getFieldBg(color);
+                    const borderColor = color;
 
                     const isSignature = field.type === "signature";
                     const isInitial = field.type === "initial";
@@ -281,13 +377,13 @@ export default function PdfRenderer({
                       ? (field.recipientName || "Initials")
                       : field.recipientName || "Signature";
 
-                    // ─── Signature / Initial: image or fallback text ───
+                    // ─── Signature / Initial ──────────────────────
                     if (isSignature || isInitial) {
                       let imgSrc: string | null = null;
                       if (isSignature) {
-                        imgSrc = userSignature || null;      // no fallback image
+                        imgSrc = userSignature || null;
                       } else if (isInitial) {
-                        imgSrc = userInitialSignature || null; // no fallback image
+                        imgSrc = userInitialSignature || null;
                       }
 
                       return (
@@ -306,7 +402,13 @@ export default function PdfRenderer({
                             if (pct) setFields((prev) => prev.map((f) => f.id === field.id ? { ...f, ...pct } : f));
                           }}
                         >
-                          <div className="w-full h-full group relative flex items-center justify-center border-2 border-dashed border-gray-400 hover:border-blue-500 rounded transition-colors bg-white/50">
+                          <div
+                            className="w-full h-full group relative flex items-center justify-center border-2 rounded transition-colors bg-white/50"
+                            style={{
+                              borderColor: borderColor,
+                              backgroundColor: bgColor,
+                            }}
+                          >
                             {imgSrc ? (
                               <img
                                 src={imgSrc}
@@ -316,8 +418,11 @@ export default function PdfRenderer({
                               />
                             ) : (
                               <span
-                                className="text-gray-500 font-medium select-none"
-                                style={{ fontSize: `calc(${rect.h}px * 0.35)` }}
+                                className="font-medium select-none"
+                                style={{
+                                  fontSize: `calc(${rect.h}px * 0.35)`,
+                                  color: color === '#D1D5DB' ? '#6B7280' : color,
+                                }}
                               >
                                 {isInitial ? "Initials" : "Signature"}
                               </span>
@@ -333,7 +438,7 @@ export default function PdfRenderer({
                       );
                     }
 
-                    // ─── Name & Date: editable text (original logic) ───
+                    // ─── Name & Date: editable text ──────────────
                     return (
                       <Rnd
                         key={field.id}
@@ -350,7 +455,13 @@ export default function PdfRenderer({
                           if (pct) setFields((prev) => prev.map((f) => f.id === field.id ? { ...f, ...pct } : f));
                         }}
                       >
-                        <div className="w-full h-full group relative flex items-center justify-center border-2 border-dashed border-gray-400 hover:border-blue-500 rounded transition-colors bg-white/50">
+                        <div
+                          className="w-full h-full group relative flex items-center justify-center border-2 rounded transition-colors bg-white/50"
+                          style={{
+                            borderColor: borderColor,
+                            backgroundColor: bgColor,
+                          }}
+                        >
                           <div className="w-full h-full flex items-center justify-center px-2">
                             {editingFieldId === field.id ? (
                               <input
@@ -378,8 +489,11 @@ export default function PdfRenderer({
                               />
                             ) : (
                               <span
-                                className="text-gray-900 font-medium whitespace-nowrap overflow-hidden select-none cursor-pointer"
-                                style={{ fontSize: `calc(${rect.h}px * 0.35)` }}
+                                className="font-medium whitespace-nowrap overflow-hidden select-none cursor-pointer"
+                                style={{
+                                  fontSize: `calc(${rect.h}px * 0.35)`,
+                                  color: color === '#D1D5DB' ? '#374151' : color,
+                                }}
                                 onDoubleClick={(e) => {
                                   e.stopPropagation();
                                   setEditingFieldId(field.id);

@@ -19,7 +19,6 @@ import {
 } from "lucide-react";
 import SuccessModal from "@/components/SuccessModal";
 
-// ─── ADDED "initial" ──────────────────────────────────────────────
 type FieldType = "signature" | "name" | "date" | "initial";
 
 interface Field {
@@ -39,6 +38,20 @@ function makeId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+// ─── Color palette ─────────────────────────────────────────────────
+const RECIPIENT_COLORS = [
+  '#4F46E5', '#DC2626', '#16A34A', '#D97706', '#7C3AED', '#0891B2',
+  '#DB2777', '#2563EB', '#65A30D', '#0D9488', '#EA580C', '#6366F1',
+];
+
+// ─── Field button definitions ──────────────────────────────────────
+const FIELD_BUTTONS: { type: FieldType; label: string; icon: string; color: string }[] = [
+  { type: "signature", label: "Signature", icon: "📝", color: "#4F46E5" },
+  { type: "initial", label: "Initials", icon: "✍️", color: "#7C3AED" },
+  { type: "name", label: "Full Name", icon: "👤", color: "#0891B2" },
+  { type: "date", label: "Date Signed", icon: "📅", color: "#16A34A" },
+];
+
 export default function PreparePage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -50,7 +63,6 @@ export default function PreparePage() {
   const [isSaving, setIsSaving] = useState(false);
 
   const [numPages, setNumPages] = useState<number>(0);
-
   const [pageRects, setPageRects] = useState<Record<number, PageRect>>({});
   const [placingType, setPlacingType] = useState<FieldType | null>(null);
   const [draggingFieldType, setDraggingFieldType] = useState<FieldType | null>(null);
@@ -59,9 +71,21 @@ export default function PreparePage() {
   const [firstRecipient, setFirstRecipient] = useState("");
   const [signingMode, setSigningMode] = useState<"sequential" | "parallel">("sequential");
 
-  // ─── State for both signatures ──────────────────────────────────
   const [userSignature, setUserSignature] = useState<string | null>(null);
   const [userInitialSignature, setUserInitialSignature] = useState<string | null>(null);
+
+  // ─── Ref for custom drag image ─────────────────────────────────
+  const dragImageRef = useRef<HTMLDivElement | null>(null);
+
+  // ─── Color map ──────────────────────────────────────────────────
+  const recipientColorMap = useMemo(() => {
+    const map: Record<string, string> = {};
+    const participants = meeting?.participants || [];
+    participants.forEach((p: any, index: number) => {
+      map[p.name] = RECIPIENT_COLORS[index % RECIPIENT_COLORS.length];
+    });
+    return map;
+  }, [meeting?.participants]);
 
   // ─── Fetch meeting ──────────────────────────────────────────────
   useEffect(() => {
@@ -111,10 +135,9 @@ export default function PreparePage() {
     return token ? { Authorization: `Bearer ${token}` } : {};
   }, []);
 
-  // ─── Load both full and initial signatures ─────────────────────
+  // ─── Load signatures ────────────────────────────────────────────
   useEffect(() => {
     async function loadUserSignature() {
-      // Try localStorage first
       const localSig = localStorage.getItem("userSignature");
       if (localSig) setUserSignature(localSig);
       const localInit = localStorage.getItem("userInitialSignature");
@@ -256,6 +279,90 @@ export default function PreparePage() {
     }
   };
 
+  // ─── Drag handler for FIELD BUTTONS (fixed) ─────────────────────
+  const handleFieldDragStart = (
+    e: React.DragEvent,
+    type: FieldType,
+    label: string
+  ) => {
+    setDraggingFieldType(type);
+
+    // Set the data — critical for the drop handler to know what to create
+    e.dataTransfer.effectAllowed = "copy";
+    e.dataTransfer.setData("text/plain", type);
+
+    // Custom drag ghost so the user sees something while dragging
+    if (dragImageRef.current) {
+      document.body.removeChild(dragImageRef.current);
+      dragImageRef.current = null;
+    }
+
+    const ghost = document.createElement("div");
+    ghost.textContent = label;
+    ghost.style.cssText = `
+      padding: 6px 14px;
+      background: #4F46E5;
+      color: white;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      display: inline-block;
+      white-space: nowrap;
+      position: fixed;
+      top: -1000px;
+      left: -1000px;
+      pointer-events: none;
+      z-index: 9999;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+    `;
+    document.body.appendChild(ghost);
+    dragImageRef.current = ghost;
+
+    // setDragImage requires the element to be in the DOM (even off-screen)
+    e.dataTransfer.setDragImage(ghost, 60, 15);
+  };
+
+  // ─── Drag handler for RECIPIENT buttons (unchanged) ─────────────
+  const handleRecipientDragStart = (e: React.DragEvent, recipientName: string) => {
+    // Cleanup any previous ghost
+    if (dragImageRef.current) {
+      document.body.removeChild(dragImageRef.current);
+      dragImageRef.current = null;
+    }
+
+    const dragImage = document.createElement("div");
+    dragImage.textContent = `👤 ${recipientName}`;
+    dragImage.style.cssText = `
+      padding: 4px 12px;
+      background: #4F46E5;
+      color: white;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 500;
+      display: inline-block;
+      white-space: nowrap;
+      position: fixed;
+      pointer-events: none;
+      z-index: 9999;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    `;
+    document.body.appendChild(dragImage);
+    dragImageRef.current = dragImage;
+
+    e.dataTransfer.setDragImage(dragImage, 20, 12);
+    e.dataTransfer.effectAllowed = "copy";
+    e.dataTransfer.setData("text/plain", `recipient:${recipientName}`);
+  };
+
+  // ─── Shared drag end cleanup ────────────────────────────────────
+  const handleDragEnd = () => {
+    setDraggingFieldType(null);
+    if (dragImageRef.current) {
+      document.body.removeChild(dragImageRef.current);
+      dragImageRef.current = null;
+    }
+  };
+
   if (loading) {
     return (
       <div className="h-screen flex items-center justify-center bg-[#f8f9fc]">
@@ -279,8 +386,11 @@ export default function PreparePage() {
   const isPdf = storedName.toLowerCase().endsWith(".pdf");
   const fileUrl = id ? `/api/meetings/${id}/pdf` : "";
 
+  const selectedColor = selectedRecipient ? recipientColorMap[selectedRecipient] : null;
+
   return (
     <div className="h-screen flex flex-col bg-[#f0f2f5] overflow-hidden">
+      {/* Top Navbar */}
       <header className="bg-white border-b px-8 py-3 flex justify-between items-center shadow-sm z-50">
         <div className="flex items-center gap-4">
           <button
@@ -319,6 +429,7 @@ export default function PreparePage() {
       </header>
 
       <div className="flex flex-1 overflow-hidden">
+        {/* Left Thumbnails */}
         <aside className="w-48 bg-white border-r p-3 overflow-y-auto z-40 shadow-sm">
           <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
             Pages
@@ -337,6 +448,7 @@ export default function PreparePage() {
           )}
         </aside>
 
+        {/* Center: PDF Viewer */}
         <main className="flex-1 overflow-auto p-6 flex justify-center bg-[#e2e8f0] relative">
           <div className="max-w-3xl w-full">
             {!fileUrl ? (
@@ -352,116 +464,88 @@ export default function PreparePage() {
                 setFields={setFields}
                 draggingFieldType={draggingFieldType}
                 userSignature={userSignature}
-                userInitialSignature={userInitialSignature} // ← NEW PROP
+                userInitialSignature={userInitialSignature}
                 onNumPagesChange={setNumPages}
                 participants={meeting?.participants}
                 selectedRecipient={selectedRecipient}
                 onSelectRecipient={setSelectedRecipient}
+                recipientColorMap={recipientColorMap}
               />
             )}
           </div>
         </main>
 
+        {/* Right Sidebar */}
         <aside className="w-64 bg-white border-l p-4 flex flex-col gap-4 z-40 shadow-sm overflow-y-auto">
           <div>
             <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
               Draggable Fields
             </h3>
             <div className="flex flex-col space-y-2">
-              {/* Signature */}
-              <div
-                draggable
-                onDragStart={(e) => {
-                  setDraggingFieldType("signature");
-                  e.dataTransfer.effectAllowed = "copy";
-                }}
-                onDragEnd={() => setDraggingFieldType(null)}
-                className="px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded hover:bg-slate-50 hover:border-blue-500 hover:text-blue-600 transition-all cursor-move shadow-sm"
-              >
-                📝 Signature
-              </div>
-
-              {/* ─── NEW: Initials draggable field ────────────────── */}
-              <div
-                draggable
-                onDragStart={(e) => {
-                  setDraggingFieldType("initial");
-                  e.dataTransfer.effectAllowed = "copy";
-                }}
-                onDragEnd={() => setDraggingFieldType(null)}
-                className="px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded hover:bg-slate-50 hover:border-blue-500 hover:text-blue-600 transition-all cursor-move shadow-sm"
-              >
-                ✍️ Initials
-              </div>
-
-              {/* Full Name */}
-              <div
-                draggable
-                onDragStart={(e) => {
-                  setDraggingFieldType("name");
-                  e.dataTransfer.effectAllowed = "copy";
-                }}
-                onDragEnd={() => setDraggingFieldType(null)}
-                className="px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded hover:bg-slate-50 hover:border-blue-500 hover:text-blue-600 transition-all cursor-move shadow-sm"
-              >
-                👤 Full Name
-              </div>
-
-              {/* Date */}
-              <div
-                draggable
-                onDragStart={(e) => {
-                  setDraggingFieldType("date");
-                  e.dataTransfer.effectAllowed = "copy";
-                }}
-                onDragEnd={() => setDraggingFieldType(null)}
-                className="px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded hover:bg-slate-50 hover:border-blue-500 hover:text-blue-600 transition-all cursor-move shadow-sm"
-              >
-                📅 Date Signed
-              </div>
-            </div>
-          </div>
-
-          <div className="border-t pt-4">
-            <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-3">
-              Recipients (Click to Select)
-            </p>
-            <div className="space-y-2">
-              {meeting?.participants?.map((p: any, i: number) => (
+              {FIELD_BUTTONS.map((btn) => (
                 <div
-                  key={i}
-                  onClick={() => setSelectedRecipient(p.name)}
-                  className={`flex items-center gap-2 p-2 rounded-lg border cursor-pointer transition-all ${
-                    selectedRecipient === p.name
-                      ? "bg-blue-100 border-blue-500 ring-2 ring-blue-300"
-                      : "bg-gray-50 border-gray-100 hover:bg-gray-100 hover:border-gray-300"
-                  }`}
+                  key={btn.type}
+                  draggable
+                  onDragStart={(e) => handleFieldDragStart(e, btn.type, `${btn.icon} ${btn.label}`)}
+                  onDragEnd={handleDragEnd}
+                  className="px-3 py-2 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded hover:bg-slate-50 hover:border-blue-500 hover:text-blue-600 transition-all cursor-move shadow-sm select-none"
                 >
-                  <div
-                    className={`w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold shadow-sm ${
-                      selectedRecipient === p.name
-                        ? "bg-blue-600 text-white"
-                        : "bg-indigo-600 text-white"
-                    }`}
-                  >
-                    {p?.name?.[0]?.toUpperCase?.() || "?"}
-                  </div>
-                  <div className="overflow-hidden flex-1">
-                    <p className="text-[10px] font-bold text-gray-800 truncate">
-                      {p.name}
-                    </p>
-                    <p className="text-[9px] text-gray-500 truncate">
-                      {p.email}
-                    </p>
-                  </div>
-                  {selectedRecipient === p.name && (
-                    <div className="text-blue-600 text-xs">✓</div>
-                  )}
+                  {btn.icon} {btn.label}
                 </div>
               ))}
             </div>
+          </div>
+
+          {/* Recipients */}
+          <div className="border-t pt-4">
+            <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-3">
+              Recipients (Click to Select, or Drag to create name field)
+            </p>
+            <div className="space-y-2">
+              {meeting?.participants?.map((p: any, i: number) => {
+                const color = recipientColorMap[p.name] || '#6B7280';
+                return (
+                  <div
+                    key={i}
+                    draggable
+                    onDragStart={(e) => handleRecipientDragStart(e, p.name)}
+                    onDragEnd={handleDragEnd}
+                    onClick={() => setSelectedRecipient(p.name)}
+                    className={`flex items-center gap-2 p-2 rounded-lg border-2 cursor-grab transition-all ${
+                      selectedRecipient === p.name
+                        ? 'bg-white'
+                        : 'bg-gray-50 border-gray-200 hover:bg-gray-100 hover:border-gray-300'
+                    }`}
+                    style={{
+                      borderColor: selectedRecipient === p.name ? color : undefined,
+                    }}
+                  >
+                    <div
+                      className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold shadow-sm text-white"
+                      style={{ backgroundColor: color }}
+                    >
+                      {p?.name?.[0]?.toUpperCase?.() || "?"}
+                    </div>
+                    <div className="overflow-hidden flex-1">
+                      <p className="text-[10px] font-bold text-gray-800 truncate">
+                        {p.name}
+                      </p>
+                      <p className="text-[9px] text-gray-500 truncate">
+                        {p.email}
+                      </p>
+                    </div>
+                    {selectedRecipient === p.name && (
+                      <div className="text-xs" style={{ color }}>✓</div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
             {selectedRecipient && (
-              <p className="text-[9px] text-blue-600 font-semibold mt-2 text-center">
+              <p
+                className="text-[9px] font-semibold mt-2 text-center"
+                style={{ color: selectedColor || '#2563EB' }}
+              >
                 Fields will be assigned to {selectedRecipient}
               </p>
             )}

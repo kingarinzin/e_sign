@@ -3,14 +3,7 @@
 import { useEffect, useState, useRef, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Document, Page, pdfjs } from "react-pdf";
-import {
-  Loader2,
-  Send,
-  PenTool,
-  CheckCircle2,
-  AlertCircle,
-  Layers,
-} from "lucide-react";
+import { Loader2, Send, PenTool, CheckCircle2, Trash2, AlertCircle } from "lucide-react";
 import SuccessModal from "@/components/SuccessModal";
 
 pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
@@ -21,6 +14,7 @@ const RECIPIENT_COLORS = [
   "#DB2777", "#2563EB", "#65A30D", "#0D9488", "#EA580C", "#6366F1",
 ];
 
+// ─── Field types ─────────────────────────────────────────────────
 type FieldType = "signature" | "name" | "date" | "initial";
 
 interface Field {
@@ -32,15 +26,6 @@ interface Field {
   wPct: number;
   hPct: number;
   recipientName?: string;
-}
-
-interface AutoInitial {
-  id: string;
-  page: number;
-  xPct: number;
-  yPct: number;
-  wPct: number;
-  hPct: number;
 }
 
 function makeId() {
@@ -59,40 +44,35 @@ export default function SigningView({
   signingToken?: string | null;
 }) {
   const router = useRouter();
-
   const [numPages, setNumPages] = useState(0);
   const [blobUrl, setBlobUrl] = useState("");
   const [loading, setLoading] = useState(true);
   const [signing, setSigning] = useState(false);
 
-  // Auth token resolution
+  // ─── Auth token helper ─────────────────────────────────────────
   const getAuthToken = () =>
     signingToken || localStorage.getItem("token");
 
-  // Full signature
+  // ─── Full Signature ────────────────────────────────────────────
   const [userSignature, setUserSignature] = useState<string | null>(null);
   const [hasDrawnSignature, setHasDrawnSignature] = useState(false);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [isDrawing, setIsDrawing] = useState(false);
 
-  // Initial signature
+  // ─── Initial Signature ─────────────────────────────────────────
   const [userInitialSignature, setUserInitialSignature] = useState<string | null>(null);
   const [hasDrawnInitialSignature, setHasDrawnInitialSignature] = useState(false);
   const initialCanvasRef = useRef<HTMLCanvasElement>(null);
 
-  // UI state
   const [showSuccessModal, setShowSuccessModal] = useState(false);
   const [signSuccessMessage, setSignSuccessMessage] = useState("");
   const [signatureError, setSignatureError] = useState("");
   const [validationError, setValidationError] = useState<string | null>(null);
 
-  // Filled placeholder IDs (from meeting.fields)
+  // ─── Filled placeholder state (in-memory) ─────────────────────
   const [filledIds, setFilledIds] = useState<Set<string>>(new Set());
 
-  // Auto-applied initials (Option B) — one per page where signer clicked "Apply to All"
-  const [autoInitials, setAutoInitials] = useState<AutoInitial[]>([]);
-
-  // ─── Derived: does the meeting have signing placeholders? ─────
+  // ─── Field system from prepare page ────────────────────────────
   const hasSigningFields = useMemo(() => {
     return (
       Array.isArray(meeting?.fields) &&
@@ -102,7 +82,7 @@ export default function SigningView({
     );
   }, [meeting?.fields]);
 
-  // ─── Recipient color map (matches prepare page) ───────────────
+  // ─── Recipient color map — same indexing as prepare page ──────
   const recipientColorMap = useMemo(() => {
     const map: Record<string, string> = {};
     const participants = meeting?.participants || [];
@@ -112,7 +92,7 @@ export default function SigningView({
     return map;
   }, [meeting?.participants]);
 
-  // ─── My participant record ────────────────────────────────────
+  // ─── Find the current user's participant record ───────────────
   const myParticipant = useMemo(() => {
     if (!currentUser?.email || !meeting?.participants) return null;
     return meeting.participants.find(
@@ -124,7 +104,7 @@ export default function SigningView({
     ? recipientColorMap[myParticipant.name] || "#4F46E5"
     : "#4F46E5";
 
-  // ─── My fields + signable fields ──────────────────────────────
+  // ─── Fields assigned to me ─────────────────────────────────────
   const myFields = useMemo(() => {
     if (!myParticipant || !Array.isArray(meeting?.fields)) return [];
     return meeting.fields.filter(
@@ -140,25 +120,13 @@ export default function SigningView({
     [myFields]
   );
 
-  // ─── Progress ─────────────────────────────────────────────────
-  const filledSignableCount = useMemo(
-    () => mySignableFields.filter((f: Field) => filledIds.has(f.id)).length,
-    [mySignableFields, filledIds]
-  );
-
-  const totalToFill = mySignableFields.length;
-
-  const allFilled =
-    totalToFill > 0 && filledSignableCount === totalToFill;
-
-  // ─── Did the signer fill at least one initials placeholder? ───
-  const hasFilledInitials = useMemo(
-    () =>
-      myFields.some(
-        (f: Field) => f.type === "initial" && filledIds.has(f.id)
-      ),
-    [myFields, filledIds]
-  );
+  // ─── Fields assigned to other signers ─────────────────────────
+  const otherSignersFields = useMemo(() => {
+    if (!Array.isArray(meeting?.fields)) return [];
+    return meeting.fields.filter(
+      (f: Field) => f.recipientName !== myParticipant?.name
+    );
+  }, [meeting?.fields, myParticipant?.name]);
 
   // ─── Fetch PDF ─────────────────────────────────────────────────
   useEffect(() => {
@@ -206,7 +174,7 @@ export default function SigningView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentUser?.isExternal]);
 
-  // ─── Drawing functions (signature) ────────────────────────────
+  // ─── Drawing functions ─────────────────────────────────────────
   const startDrawing = (
     e:
       | React.MouseEvent<HTMLCanvasElement>
@@ -277,7 +245,6 @@ export default function SigningView({
     });
   };
 
-  // ─── Drawing functions (initials) ─────────────────────────────
   const startInitialDrawing = (
     e:
       | React.MouseEvent<HTMLCanvasElement>
@@ -348,15 +315,15 @@ export default function SigningView({
     });
   };
 
-  // ─── Placeholder click handler ────────────────────────────────
+  // ─── Click handler for a placeholder ───────────────────────────
   const handlePlaceholderClick = (field: Field) => {
     if (!myParticipant) return;
 
     const isFilled = filledIds.has(field.id);
 
-    // Click on filled → undo
+    // Click on filled placeholder → undo
     if (isFilled) {
-      if (!confirm("Remove from this placeholder?")) return;
+      if (!confirm("Remove signature from this placeholder?")) return;
       setFilledIds((prev) => {
         const next = new Set(prev);
         next.delete(field.id);
@@ -365,7 +332,7 @@ export default function SigningView({
       return;
     }
 
-    // Fill signature placeholder
+    // Click on empty signature/initial → fill it
     if (field.type === "signature") {
       const sig =
         userSignature ||
@@ -376,19 +343,22 @@ export default function SigningView({
         window.scrollTo({ top: 0, behavior: "smooth" });
         return;
       }
-      if (hasDrawnSignature && !userSignature) saveSignature();
+
+      if (hasDrawnSignature && !userSignature) {
+        saveSignature();
+      }
 
       setFilledIds((prev) => {
         const next = new Set(prev);
         next.add(field.id);
-        // Auto-fill name + date on the same page
-        myFields
-          .filter(
-            (f: Field) =>
-              (f.type === "name" || f.type === "date") &&
-              f.page === field.page
-          )
-          .forEach((f: Field) => next.add(f.id));
+
+        // Auto-fill name + date fields on the same page
+        const samePageNameDates = myFields.filter(
+          (f: Field) =>
+            (f.type === "name" || f.type === "date") && f.page === field.page
+        );
+        samePageNameDates.forEach((f: Field) => next.add(f.id));
+
         return next;
       });
       setSignatureError("");
@@ -404,7 +374,10 @@ export default function SigningView({
         window.scrollTo({ top: 0, behavior: "smooth" });
         return;
       }
-      if (hasDrawnInitialSignature && !userInitialSignature) saveInitialSignature();
+
+      if (hasDrawnInitialSignature && !userInitialSignature) {
+        saveInitialSignature();
+      }
 
       setFilledIds((prev) => {
         const next = new Set(prev);
@@ -413,6 +386,7 @@ export default function SigningView({
       });
       setSignatureError("");
     } else if (field.type === "name" || field.type === "date") {
+      // Name/date can be filled directly
       setFilledIds((prev) => {
         const next = new Set(prev);
         next.add(field.id);
@@ -421,133 +395,84 @@ export default function SigningView({
     }
   };
 
-  // ─── Apply initials to all pages (Option B) ───────────────────
-  const applyInitialsToAllPages = () => {
-    // Find a filled initials placeholder to use as template
-    const filledInitial = myFields.find(
-      (f: Field) => f.type === "initial" && filledIds.has(f.id)
-    );
+  // ─── Fill all initials at once ────────────────────────────────
+  const fillAllInitials = () => {
+    const initialsFields = myFields.filter((f: Field) => f.type === "initial");
+    const empty = initialsFields.filter((f: Field) => !filledIds.has(f.id));
 
-    if (!filledInitial) {
-      alert("Please fill your initials placeholder first.");
+    if (empty.length === 0) {
+      alert("All initials placeholders are already filled.");
       return;
     }
 
     if (!userInitialSignature && !hasDrawnInitialSignature) {
-      alert("Please draw your initials first.");
+      alert("Please draw your initials in the sidebar first.");
       return;
     }
 
-    // Build list of pages that already have initials
-    const pagesWithInitials = new Set<number>([
-      ...myFields
-        .filter((f: Field) => f.type === "initial" && filledIds.has(f.id))
-        .map((f: Field) => f.page),
-      ...autoInitials.map((a) => a.page),
-    ]);
-
-    const newEntries: AutoInitial[] = [];
-    for (let page = 1; page <= numPages; page++) {
-      if (!pagesWithInitials.has(page)) {
-        newEntries.push({
-          id: makeId(),
-          page,
-          xPct: filledInitial.xPct,
-          yPct: filledInitial.yPct,
-          wPct: filledInitial.wPct,
-          hPct: filledInitial.hPct,
-        });
-      }
-    }
-
-    if (newEntries.length === 0) {
-      alert("Initials are already applied to all pages.");
-      return;
-    }
-
-    if (!confirm(`Apply initials to ${newEntries.length} more page(s)?`)) return;
+    if (!confirm(`Fill all ${empty.length} initials placeholders?`)) return;
 
     if (hasDrawnInitialSignature && !userInitialSignature) {
       saveInitialSignature();
     }
 
-    setAutoInitials((prev) => [...prev, ...newEntries]);
+    setFilledIds((prev) => {
+      const next = new Set(prev);
+      empty.forEach((f: Field) => next.add(f.id));
+      return next;
+    });
   };
 
-  // ─── Remove an auto-applied initials ──────────────────────────
-  const removeAutoInitial = (id: string) => {
-    setAutoInitials((prev) => prev.filter((a) => a.id !== id));
+  // ─── Build signature positions from filled fields ─────────────
+  const buildSignaturePositions = () => {
+    const sigs: any[] = [];
+    const initials: any[] = [];
+
+    myFields.forEach((field: Field) => {
+      if (!filledIds.has(field.id)) return;
+
+      const pageRect = { w: 700, h: 900 }; // fallback
+      const pos = {
+        id: field.id,
+        page: field.page,
+        x: field.xPct * pageRect.w,
+        y: field.yPct * pageRect.h,
+        width: field.wPct * pageRect.w,
+        height: field.hPct * pageRect.h,
+      };
+
+      if (field.type === "signature") sigs.push(pos);
+      else if (field.type === "initial") initials.push(pos);
+    });
+
+    return { sigs, initials };
   };
 
-  // ─── Handle sign submission ───────────────────────────────────
+  // ─── Handle sign submission ────────────────────────────────────
   const handleSign = async () => {
     setSignatureError("");
     setValidationError(null);
 
+    // If we're using the new placeholder flow
     if (hasSigningFields) {
-      // Validate all signable placeholders are filled
+      // Check all my signable fields are filled
       const unfilled = mySignableFields.filter((f: Field) => !filledIds.has(f.id));
 
       if (unfilled.length > 0) {
-        setValidationError(
-          `Please fill all your placeholders before signing.\n\nMissing:\n${unfilled
-            .map(
-              (f: Field) =>
-                `• Page ${f.page}: ${
-                  f.type === "signature" ? "Signature" : "Initials"
-                }`
-            )
-            .join("\n")}`
-        );
+        const pages = [...new Set(unfilled.map((f: Field) => f.page))];
+        const msg = `Please fill all your placeholders before signing.\n\nMissing:\n${unfilled
+          .map((f: Field) => `• Page ${f.page}: ${f.type === "signature" ? "Signature" : "Initials"}`)
+          .join("\n")}`;
+        setValidationError(msg);
         setSignatureError("Please fill all your placeholders before signing");
         window.scrollTo({ top: 0, behavior: "smooth" });
         return;
       }
 
-      // Build signature + initials positions
-      const PAGE_W = 700;
-      const PAGE_H = 900;
+      const { sigs, initials } = buildSignaturePositions();
 
-      const signaturePositions = myFields
-        .filter((f: Field) => f.type === "signature" && filledIds.has(f.id))
-        .map((f: Field) => ({
-          id: f.id,
-          page: f.page,
-          x: f.xPct * PAGE_W,
-          y: f.yPct * PAGE_H,
-          width: f.wPct * PAGE_W,
-          height: f.hPct * PAGE_H,
-        }));
-
-      const initialSignaturePositions = [
-        ...myFields
-          .filter((f: Field) => f.type === "initial" && filledIds.has(f.id))
-          .map((f: Field) => ({
-            id: f.id,
-            page: f.page,
-            x: f.xPct * PAGE_W,
-            y: f.yPct * PAGE_H,
-            width: f.wPct * PAGE_W,
-            height: f.hPct * PAGE_H,
-          })),
-        ...autoInitials.map((a) => ({
-          id: a.id,
-          page: a.page,
-          x: a.xPct * PAGE_W,
-          y: a.yPct * PAGE_H,
-          width: a.wPct * PAGE_W,
-          height: a.hPct * PAGE_H,
-        })),
-      ];
-
-      const finalFullSignature =
-        userSignature ||
-        (hasDrawnSignature ? canvasRef.current?.toDataURL("image/png") : null);
-      const finalInitialSignature =
-        userInitialSignature ||
-        (hasDrawnInitialSignature
-          ? initialCanvasRef.current?.toDataURL("image/png")
-          : null);
+      const finalFullSignature = userSignature || (hasDrawnSignature ? canvasRef.current?.toDataURL("image/png") : null);
+      const finalInitialSignature = userInitialSignature || (hasDrawnInitialSignature ? initialCanvasRef.current?.toDataURL("image/png") : null);
 
       setSigning(true);
       try {
@@ -560,9 +485,9 @@ export default function SigningView({
           },
           body: JSON.stringify({
             signature: finalFullSignature,
-            signaturePositions,
+            signaturePositions: sigs,
             initialSignature: finalInitialSignature,
-            initialSignaturePositions,
+            initialSignaturePositions: initials,
           }),
         });
 
@@ -582,7 +507,9 @@ export default function SigningView({
       return;
     }
 
-    // No placeholders → block
+    // ─── Fallback: old flow (no fields placed) ────────────────
+    // (Old drag-and-drop logic can be restored here if needed.
+    //  For now, block submission.)
     setValidationError(
       "This document has no signature placeholders. Please contact the organizer."
     );
@@ -611,13 +538,9 @@ export default function SigningView({
             className="bg-[#1a2b4a] text-white px-6 py-2 rounded-lg font-semibold hover:bg-[#0f1b2e] transition disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 cursor-pointer"
           >
             {signing ? (
-              <>
-                <Loader2 className="animate-spin" size={16} /> Signing...
-              </>
+              <><Loader2 className="animate-spin" size={16} /> Signing...</>
             ) : (
-              <>
-                <Send size={16} /> Sign & Submit
-              </>
+              <><Send size={16} /> Sign & Submit</>
             )}
           </button>
         </div>
@@ -640,7 +563,7 @@ export default function SigningView({
       )}
 
       <div className="flex flex-1 overflow-hidden">
-        {/* Left: thumbnails */}
+        {/* Page thumbnails */}
         <aside className="w-48 bg-white border-r p-3 overflow-y-auto z-40 shadow-sm flex-shrink-0">
           <h3 className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">
             Pages
@@ -674,13 +597,11 @@ export default function SigningView({
               </div>
             </Document>
           ) : (
-            <div className="text-[10px] text-gray-400 text-center py-4">
-              Loading...
-            </div>
+            <div className="text-[10px] text-gray-400 text-center py-4">Loading...</div>
           )}
         </aside>
 
-        {/* Center: PDF */}
+        {/* PDF center */}
         <main className="flex-1 overflow-auto p-8 flex justify-center bg-[#e2e8f0]">
           <div className="max-w-3xl">
             {blobUrl && (
@@ -694,9 +615,6 @@ export default function SigningView({
                   const pageFields = Array.isArray(meeting.fields)
                     ? meeting.fields.filter((f: Field) => f.page === pageNum)
                     : [];
-                  const pageAutoInitials = autoInitials.filter(
-                    (a) => a.page === pageNum
-                  );
 
                   return (
                     <div
@@ -712,21 +630,17 @@ export default function SigningView({
                         renderAnnotationLayer={false}
                       />
 
-                      {/* Placeholders */}
+                      {/* Render placeholders */}
                       {pageFields.map((field: Field) => {
-                        const isMine =
-                          field.recipientName === myParticipant?.name;
+                        const isMine = field.recipientName === myParticipant?.name;
                         const isFilled = filledIds.has(field.id);
                         const ownerColor =
-                          recipientColorMap[field.recipientName || ""] ||
-                          "#6B7280";
+                          recipientColorMap[field.recipientName || ""] || "#6B7280";
 
                         return (
                           <div
                             key={field.id}
-                            onClick={() =>
-                              isMine && handlePlaceholderClick(field)
-                            }
+                            onClick={() => isMine && handlePlaceholderClick(field)}
                             className={`absolute border-2 rounded transition-all ${
                               isFilled
                                 ? "border-green-500 bg-white"
@@ -749,35 +663,33 @@ export default function SigningView({
                                 : isMine
                                 ? `${ownerColor}10`
                                 : "rgba(243, 244, 246, 0.3)",
-                              animation:
-                                isMine && !isFilled
-                                  ? "pulse-border 2s ease-in-out infinite"
-                                  : "none",
+                              animation: isMine && !isFilled
+                                ? "pulse-border 2s ease-in-out infinite"
+                                : "none",
                             }}
                           >
                             {isFilled ? (
+                              // Filled: show signature/initials/name/date
                               <>
                                 {field.type === "signature" &&
-                                  userSignature && (
+                                  (userSignature || hasDrawnSignature) && (
                                     <img
-                                      src={userSignature}
+                                      src={userSignature || ""}
                                       alt="signature"
                                       className="w-full h-full object-contain p-1"
                                     />
                                   )}
                                 {field.type === "initial" &&
-                                  userInitialSignature && (
+                                  (userInitialSignature || hasDrawnInitialSignature) && (
                                     <img
-                                      src={userInitialSignature}
+                                      src={userInitialSignature || ""}
                                       alt="initials"
                                       className="w-full h-full object-contain p-1"
                                     />
                                   )}
                                 {field.type === "name" && (
                                   <div className="w-full h-full flex items-center justify-center text-sm font-semibold text-gray-800">
-                                    {myParticipant?.name ||
-                                      currentUser?.name ||
-                                      ""}
+                                    {myParticipant?.name || currentUser?.name || ""}
                                   </div>
                                 )}
                                 {field.type === "date" && (
@@ -790,12 +702,11 @@ export default function SigningView({
                                 </div>
                               </>
                             ) : (
+                              // Empty placeholder
                               <div className="w-full h-full flex flex-col items-center justify-center text-center px-1">
                                 <span
                                   className="text-[10px] font-bold uppercase tracking-wider"
-                                  style={{
-                                    color: isMine ? ownerColor : "#9CA3AF",
-                                  }}
+                                  style={{ color: isMine ? ownerColor : "#9CA3AF" }}
                                 >
                                   {field.type === "signature" && "✍ Sign Here"}
                                   {field.type === "initial" && "Initial Here"}
@@ -805,13 +716,9 @@ export default function SigningView({
                                 {field.recipientName && (
                                   <span
                                     className="text-[9px] mt-0.5 truncate max-w-full"
-                                    style={{
-                                      color: isMine ? ownerColor : "#9CA3AF",
-                                    }}
+                                    style={{ color: isMine ? ownerColor : "#9CA3AF" }}
                                   >
-                                    {isMine
-                                      ? "Your signature"
-                                      : `Reserved: ${field.recipientName}`}
+                                    {isMine ? "Your signature" : `Reserved: ${field.recipientName}`}
                                   </span>
                                 )}
                               </div>
@@ -819,41 +726,6 @@ export default function SigningView({
                           </div>
                         );
                       })}
-
-                      {/* Auto-applied initials (Option B) */}
-                      {pageAutoInitials.map((a) => (
-                        <div
-                          key={a.id}
-                          onClick={() => {
-                            if (
-                              confirm(
-                                "Remove initials from this page?"
-                              )
-                            ) {
-                              removeAutoInitial(a.id);
-                            }
-                          }}
-                          className="absolute border-2 border-purple-500 rounded bg-white cursor-pointer shadow-sm hover:shadow-md transition group"
-                          style={{
-                            left: `${a.xPct * 100}%`,
-                            top: `${a.yPct * 100}%`,
-                            width: `${a.wPct * 100}%`,
-                            height: `${a.hPct * 100}%`,
-                          }}
-                          title="Click to remove initials from this page"
-                        >
-                          {userInitialSignature && (
-                            <img
-                              src={userInitialSignature}
-                              alt="initials"
-                              className="w-full h-full object-contain p-1"
-                            />
-                          )}
-                          <div className="absolute -top-1 -right-1 bg-purple-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-[10px] opacity-0 group-hover:opacity-100 transition">
-                            ✕
-                          </div>
-                        </div>
-                      ))}
                     </div>
                   );
                 })}
@@ -862,7 +734,7 @@ export default function SigningView({
           </div>
         </main>
 
-        {/* Right Sidebar */}
+        {/* Right sidebar */}
         <aside className="w-80 bg-white border-l p-6 flex flex-col gap-6 overflow-y-auto shadow-lg flex-shrink-0">
           {/* Full signature */}
           <div>
@@ -993,24 +865,16 @@ export default function SigningView({
               </div>
             )}
 
-            {/* ── Apply Initials to All Pages ── */}
-            {hasFilledInitials && numPages > 1 && (
-              <button
-                onClick={applyInitialsToAllPages}
-                className="mt-3 w-full bg-purple-600 hover:bg-purple-700 text-white py-2.5 rounded-lg text-sm font-semibold transition flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <Layers size={16} />
-                Apply Initials to All {numPages} Pages
-              </button>
-            )}
-
-            {/* Show count if some are already applied */}
-            {autoInitials.length > 0 && (
-              <p className="mt-2 text-[11px] text-purple-700 bg-purple-50 rounded p-2 text-center">
-                Initials applied to {autoInitials.length + (hasFilledInitials ? 1 : 0)}{" "}
-                page(s). Click any initials to remove.
-              </p>
-            )}
+            {/* Fill all initials button */}
+            {hasSigningFields &&
+              myFields.some((f: Field) => f.type === "initial") && (
+                <button
+                  onClick={fillAllInitials}
+                  className="mt-3 w-full bg-purple-600 text-white py-2 rounded-lg text-sm font-medium hover:bg-purple-700 transition cursor-pointer"
+                >
+                  Fill All Initials Placeholders
+                </button>
+              )}
           </div>
 
           {/* Progress */}
@@ -1019,46 +883,35 @@ export default function SigningView({
               <h3 className="text-sm font-bold text-gray-700 mb-3">Progress</h3>
               <div className="space-y-2">
                 <div className="text-xs text-gray-600">
-                  {filledSignableCount} of {totalToFill} filled
+                  {filledIds.size} of {mySignableFields.length} filled
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-2">
                   <div
-                    className={`h-2 rounded-full transition-all ${
-                      allFilled ? "bg-green-500" : "bg-amber-500"
-                    }`}
+                    className="bg-green-500 h-2 rounded-full transition-all"
                     style={{
                       width: `${
-                        totalToFill > 0
-                          ? (filledSignableCount / totalToFill) * 100
-                          : 0
+                        (mySignableFields.filter((f: Field) => filledIds.has(f.id)).length /
+                          mySignableFields.length) *
+                        100
                       }%`,
                     }}
                   />
                 </div>
-                {allFilled && (
-                  <p className="text-xs text-green-700 font-medium">
-                    ✓ All required fields filled
-                  </p>
-                )}
               </div>
             </div>
           )}
 
-          {/* Signing As */}
+          {/* Signing as */}
           <div className="border-t pt-6">
             <h3 className="text-sm font-bold text-gray-700 mb-3">Signing As</h3>
             <div className="space-y-3 text-sm bg-gray-50 rounded-lg p-4">
               <div>
                 <span className="text-gray-500 text-xs">Name:</span>
-                <p className="font-semibold text-gray-900">
-                  {currentUser.name}
-                </p>
+                <p className="font-semibold text-gray-900">{currentUser.name}</p>
               </div>
               <div>
                 <span className="text-gray-500 text-xs">Email:</span>
-                <p className="font-medium text-gray-700">
-                  {currentUser.email}
-                </p>
+                <p className="font-medium text-gray-700">{currentUser.email}</p>
               </div>
               {currentUser.isExternal && (
                 <div className="text-[10px] bg-orange-100 text-orange-700 px-2 py-1 rounded-full font-semibold inline-block">
@@ -1073,13 +926,8 @@ export default function SigningView({
       {/* Pulse animation */}
       <style jsx global>{`
         @keyframes pulse-border {
-          0%,
-          100% {
-            opacity: 1;
-          }
-          50% {
-            opacity: 0.6;
-          }
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.6; }
         }
       `}</style>
 

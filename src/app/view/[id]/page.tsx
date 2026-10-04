@@ -15,12 +15,17 @@ const Page = dynamic(
   { ssr: false }
 );
 
-// Setup PDF.js worker
+// Setup PDF.js worker — local /public file (not CDN)
 if (typeof window !== "undefined") {
-  import("react-pdf").then((pdfjs) => {
-    pdfjs.pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.pdfjs.version}/build/pdf.worker.min.mjs`;
+  import("react-pdf").then(({ pdfjs }) => {
+    pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
   });
 }
+
+// Helper for dedup keys — rounds to 5px so tiny coordinate
+// differences still match (percent-based vs pixel-based).
+const renderKey = (page: number, x: number, y: number) =>
+  `${page}-${Math.round(x / 5)}-${Math.round(y / 5)}`;
 
 export default function ViewDocumentPage() {
   const { id } = useParams<{ id: string }>();
@@ -32,7 +37,11 @@ export default function ViewDocumentPage() {
   const [numPages, setNumPages] = useState(0);
   const [error, setError] = useState("");
 
+  // ─── Fetch document + PDF blob ────────────────────────────────
   useEffect(() => {
+    let cancelled = false;
+    let localBlobUrl = "";
+
     async function fetchDocument() {
       try {
         const token = localStorage.getItem("token");
@@ -45,6 +54,8 @@ export default function ViewDocumentPage() {
           headers: { Authorization: `Bearer ${token}` },
         });
 
+        if (cancelled) return;
+
         if (!meetingRes.ok) {
           setError("Document not found");
           setLoading(false);
@@ -53,34 +64,47 @@ export default function ViewDocumentPage() {
 
         const meetingData = await meetingRes.json();
         const mtg = meetingData.meeting || meetingData;
-        setMeeting(mtg);
+        if (!cancelled) setMeeting(mtg);
 
         const pdfRes = await fetch(`/api/meetings/${id}/pdf`, {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },
         });
 
+        if (cancelled) return;
+
         if (pdfRes.ok) {
           const blob = await pdfRes.blob();
-          setBlobUrl(URL.createObjectURL(blob));
+          if (cancelled) return;
+          localBlobUrl = URL.createObjectURL(blob);
+          setBlobUrl(localBlobUrl);
         } else {
           const errorData = await pdfRes.json().catch(() => ({}));
           if (errorData.error?.includes("missing")) {
-            setError("The PDF file for this document is missing from the server.");
+            setError(
+              "The PDF file for this document is missing from the server."
+            );
           } else {
             setError("Failed to load PDF file");
           }
         }
 
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       } catch (err) {
-        console.error("Error:", err);
-        setError("Failed to load document");
-        setLoading(false);
+        if (!cancelled) {
+          console.error("Error:", err);
+          setError("Failed to load document");
+          setLoading(false);
+        }
       }
     }
 
     fetchDocument();
+
+    return () => {
+      cancelled = true;
+      if (localBlobUrl) URL.revokeObjectURL(localBlobUrl);
+    };
   }, [id, router]);
 
   const handleDownload = async () => {
@@ -113,7 +137,7 @@ export default function ViewDocumentPage() {
     }
   };
 
-  // ─── Collect all full signatures ──────────────────────────────
+  // ─── Collect all full signatures (fallback source) ─────────────
   const allSignatures: Array<{
     id: string;
     page: number;
@@ -125,7 +149,7 @@ export default function ViewDocumentPage() {
     signerName: string;
   }> = [];
 
-  // ─── NEW: Collect all initial signatures ──────────────────────
+  // ─── Collect all initial signatures (fallback source) ─────────
   const allInitialSignatures: Array<{
     id: string;
     page: number;
@@ -141,7 +165,6 @@ export default function ViewDocumentPage() {
     meeting.participants
       .filter((p: any) => p.signed)
       .forEach((p: any) => {
-        // Full signatures
         if (p.signaturePositions && Array.isArray(p.signaturePositions)) {
           p.signaturePositions.forEach((pos: any) => {
             allSignatures.push({
@@ -151,8 +174,10 @@ export default function ViewDocumentPage() {
             });
           });
         }
-        // ─── NEW: Initial signatures ────────────────────────────
-        if (p.initialSignaturePositions && Array.isArray(p.initialSignaturePositions)) {
+        if (
+          p.initialSignaturePositions &&
+          Array.isArray(p.initialSignaturePositions)
+        ) {
           p.initialSignaturePositions.forEach((pos: any) => {
             allInitialSignatures.push({
               ...pos,
@@ -164,17 +189,28 @@ export default function ViewDocumentPage() {
       });
   }
 
+  // ─── Dedup sets ────────────────────────────────────────────────
+  // These live OUTSIDE the page loop so they persist across pages.
+  // Order: fields loop renders first (with paginated key), then the
+  // freeform loops check and skip anything already drawn.
+  const renderedSignatureKeys = new Set<string>();
+  const renderedInitialKeys = new Set<string>();
+
+  // ─── Loading state ─────────────────────────────────────────────
   if (loading) {
     return (
       <div className="h-screen flex items-center justify-center bg-[#f8f9fc]">
         <div className="flex flex-col items-center gap-3">
           <Loader2 className="animate-spin text-blue-600" size={40} />
-          <p className="text-sm font-semibold text-gray-500">Loading Document...</p>
+          <p className="text-sm font-semibold text-gray-500">
+            Loading Document...
+          </p>
         </div>
       </div>
     );
   }
 
+  // ─── Error state ───────────────────────────────────────────────
   if (error) {
     return (
       <div className="min-h-screen bg-[#f8f9fc] flex flex-col">
@@ -182,7 +218,9 @@ export default function ViewDocumentPage() {
           <header className="bg-white border-b px-8 py-4 shadow-sm sticky top-0 z-50">
             <div className="max-w-6xl mx-auto flex justify-between items-center">
               <div>
-                <h1 className="text-xl font-bold text-gray-900">{meeting.title}</h1>
+                <h1 className="text-xl font-bold text-gray-900">
+                  {meeting.title}
+                </h1>
                 <p className="text-sm text-gray-500 mt-1">Document ID: {id}</p>
               </div>
               <button
@@ -199,10 +237,13 @@ export default function ViewDocumentPage() {
             <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4">
               <AlertCircle className="w-8 h-8 text-red-600" />
             </div>
-            <h2 className="text-xl font-bold text-gray-900 mb-2">PDF File Not Found</h2>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">
+              PDF File Not Found
+            </h2>
             <p className="text-red-600 text-sm mb-4">{error}</p>
             <p className="text-gray-600 text-sm mb-6">
-              The document metadata exists, but the PDF file has been removed from the server.
+              The document metadata exists, but the PDF file has been removed
+              from the server.
             </p>
             <button
               onClick={() => router.push("/dashboard")}
@@ -216,16 +257,21 @@ export default function ViewDocumentPage() {
     );
   }
 
+  // ─── Success state ─────────────────────────────────────────────
   return (
     <div className="min-h-screen bg-[#f0f2f5] flex flex-col">
       {/* Header */}
       <header className="bg-white border-b px-8 py-4 shadow-sm sticky top-0 z-50">
         <div className="max-w-6xl mx-auto flex justify-between items-center">
           <div>
-            <h1 className="text-xl font-bold text-gray-900">{meeting?.title}</h1>
+            <h1 className="text-xl font-bold text-gray-900">
+              {meeting?.title}
+            </h1>
             <div className="flex items-center gap-2 mt-1">
               <CheckCircle className="w-4 h-4 text-green-600" />
-              <p className="text-sm text-green-600 font-medium">Fully Signed</p>
+              <p className="text-sm text-green-600 font-medium">
+                Fully Signed
+              </p>
             </div>
           </div>
           <div className="flex gap-3">
@@ -257,6 +303,15 @@ export default function ViewDocumentPage() {
             >
               {Array.from({ length: numPages }, (_, i) => {
                 const pageNum = i + 1;
+
+                // Filter signatures & initials for this page
+                const pageSignatures = allSignatures.filter(
+                  (sig) => sig.page === pageNum
+                );
+                const pageInitials = allInitialSignatures.filter(
+                  (sig) => sig.page === pageNum
+                );
+
                 return (
                   <div key={pageNum} className="mb-6 shadow-xl relative">
                     <Page
@@ -266,70 +321,161 @@ export default function ViewDocumentPage() {
                       renderAnnotationLayer={false}
                     />
 
-                    {/* ─── Show placed fields ──────────────────────────── */}
-                    {meeting?.fields && Array.isArray(meeting.fields) && meeting.fields
-                      .filter((f: any) => f.page === pageNum)
-                      .map((field: any, idx: number) => {
-                        const fieldOwner = meeting.participants?.find((p: any) => {
-                          const fieldRecipient = field.recipientName?.toLowerCase() || '';
-                          const pName = p.name?.toLowerCase() || '';
-                          const pEmail = p.email?.toLowerCase() || '';
-                          return fieldRecipient === pName || fieldRecipient === pEmail ||
-                                 pName.includes(fieldRecipient) || fieldRecipient.includes(pName);
-                        });
-                        const ownerSigned = fieldOwner?.signed;
+                    {/* ─── Primary source: meeting.fields ─────── */}
+                    {meeting?.fields &&
+                      Array.isArray(meeting.fields) &&
+                      meeting.fields
+                        .filter((f: any) => f.page === pageNum)
+                        .map((field: any, idx: number) => {
+                          const fieldOwner = meeting.participants?.find(
+                            (p: any) => {
+                              const fieldRecipient =
+                                field.recipientName?.toLowerCase() || "";
+                              const pName = p.name?.toLowerCase() || "";
+                              const pEmail = p.email?.toLowerCase() || "";
+                              return (
+                                fieldRecipient === pName ||
+                                fieldRecipient === pEmail ||
+                                pName.includes(fieldRecipient) ||
+                                fieldRecipient.includes(pName)
+                              );
+                            }
+                          );
+                          const ownerSigned = fieldOwner?.signed;
 
-                        return (
-                          <div
-                            key={field.id || idx}
-                            className="absolute"
-                            style={{
-                              left: `${field.xPct * 100}%`,
-                              top: `${field.yPct * 100}%`,
-                              width: `${field.wPct * 100}%`,
-                              height: `${field.hPct * 100}%`,
-                            }}
-                          >
-                            {/* ─── Full signature field ──────────────────── */}
-                            {field.type === 'signature' && ownerSigned && fieldOwner?.signature && (
-                              <div className="w-full h-full flex items-center justify-center p-1">
-                                <img
-                                  src={fieldOwner.signature}
-                                  alt="signature"
-                                  className="max-w-full max-h-full object-contain"
-                                />
+                          // ─── Signature placeholder ──────────────
+                          if (
+                            field.type === "signature" &&
+                            ownerSigned &&
+                            fieldOwner?.signature
+                          ) {
+                            // Register this position in the dedup set
+                            const pxX = field.xPct * 700;
+                            const pxY = field.yPct * 900;
+                            const key = renderKey(
+                              field.page,
+                              pxX,
+                              pxY
+                            );
+                            if (renderedSignatureKeys.has(key)) return null;
+                            renderedSignatureKeys.add(key);
+
+                            return (
+                              <div
+                                key={field.id || idx}
+                                className="absolute"
+                                style={{
+                                  left: `${field.xPct * 100}%`,
+                                  top: `${field.yPct * 100}%`,
+                                  width: `${field.wPct * 100}%`,
+                                  height: `${field.hPct * 100}%`,
+                                }}
+                              >
+                                <div className="w-full h-full flex items-center justify-center p-1">
+                                  <img
+                                    src={fieldOwner.signature}
+                                    alt="signature"
+                                    className="max-w-full max-h-full object-contain"
+                                  />
+                                </div>
                               </div>
-                            )}
-                            {/* ─── NEW: Initial signature field ──────────── */}
-                            {field.type === 'initial' && ownerSigned && fieldOwner?.initialSignature && (
-                              <div className="w-full h-full flex items-center justify-center p-1">
-                                <img
-                                  src={fieldOwner.initialSignature}
-                                  alt="initial signature"
-                                  className="max-w-full max-h-full object-contain"
-                                />
+                            );
+                          }
+
+                          // ─── Initial placeholder ────────────────
+                          if (
+                            field.type === "initial" &&
+                            ownerSigned &&
+                            fieldOwner?.initialSignature
+                          ) {
+                            const pxX = field.xPct * 700;
+                            const pxY = field.yPct * 900;
+                            const key = renderKey(
+                              field.page,
+                              pxX,
+                              pxY
+                            );
+                            if (renderedInitialKeys.has(key)) return null;
+                            renderedInitialKeys.add(key);
+
+                            return (
+                              <div
+                                key={field.id || idx}
+                                className="absolute"
+                                style={{
+                                  left: `${field.xPct * 100}%`,
+                                  top: `${field.yPct * 100}%`,
+                                  width: `${field.wPct * 100}%`,
+                                  height: `${field.hPct * 100}%`,
+                                }}
+                              >
+                                <div className="w-full h-full flex items-center justify-center p-1">
+                                  <img
+                                    src={fieldOwner.initialSignature}
+                                    alt="initial signature"
+                                    className="max-w-full max-h-full object-contain"
+                                  />
+                                </div>
                               </div>
-                            )}
-                            {/* ─── Name field ────────────────────────────── */}
-                            {field.type === 'name' && ownerSigned && fieldOwner?.name && (
-                              <div className="flex items-center justify-center h-full text-sm font-semibold text-gray-800">
+                            );
+                          }
+
+                          // ─── Name placeholder ───────────────────
+                          if (
+                            field.type === "name" &&
+                            ownerSigned &&
+                            fieldOwner?.name
+                          ) {
+                            return (
+                              <div
+                                key={field.id || idx}
+                                className="absolute flex items-center justify-center h-full text-sm font-semibold text-gray-800"
+                                style={{
+                                  left: `${field.xPct * 100}%`,
+                                  top: `${field.yPct * 100}%`,
+                                  width: `${field.wPct * 100}%`,
+                                  height: `${field.hPct * 100}%`,
+                                }}
+                              >
                                 {fieldOwner.name}
                               </div>
-                            )}
-                            {/* ─── Date field ────────────────────────────── */}
-                            {field.type === 'date' && ownerSigned && fieldOwner?.signedAt && (
-                              <div className="flex items-center justify-center h-full text-xs text-gray-700">
-                                {new Date(fieldOwner.signedAt).toLocaleDateString()}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
+                            );
+                          }
 
-                    {/* ─── Show freeform full signatures ────────────── */}
-                    {allSignatures
-                      .filter(sig => sig.page === pageNum)
-                      .map((sig) => (
+                          // ─── Date placeholder ───────────────────
+                          if (
+                            field.type === "date" &&
+                            ownerSigned &&
+                            fieldOwner?.signedAt
+                          ) {
+                            return (
+                              <div
+                                key={field.id || idx}
+                                className="absolute flex items-center justify-center h-full text-xs text-gray-700"
+                                style={{
+                                  left: `${field.xPct * 100}%`,
+                                  top: `${field.yPct * 100}%`,
+                                  width: `${field.wPct * 100}%`,
+                                  height: `${field.hPct * 100}%`,
+                                }}
+                              >
+                                {new Date(
+                                  fieldOwner.signedAt
+                                ).toLocaleDateString()}
+                              </div>
+                            );
+                          }
+
+                          return null;
+                        })}
+
+                    {/* ─── Fallback: freeform full signatures ─── */}
+                    {pageSignatures.map((sig) => {
+                      const key = renderKey(sig.page, sig.x, sig.y);
+                      if (renderedSignatureKeys.has(key)) return null;
+                      renderedSignatureKeys.add(key);
+
+                      return (
                         <div
                           key={sig.id}
                           className="absolute"
@@ -346,12 +492,16 @@ export default function ViewDocumentPage() {
                             className="w-full h-full object-contain"
                           />
                         </div>
-                      ))}
+                      );
+                    })}
 
-                    {/* ─── NEW: Show freeform initial signatures ────── */}
-                    {allInitialSignatures
-                      .filter(sig => sig.page === pageNum)
-                      .map((sig) => (
+                    {/* ─── Fallback: freeform initial signatures ── */}
+                    {pageInitials.map((sig) => {
+                      const key = renderKey(sig.page, sig.x, sig.y);
+                      if (renderedInitialKeys.has(key)) return null;
+                      renderedInitialKeys.add(key);
+
+                      return (
                         <div
                           key={sig.id}
                           className="absolute"
@@ -368,7 +518,8 @@ export default function ViewDocumentPage() {
                             className="w-full h-full object-contain"
                           />
                         </div>
-                      ))}
+                      );
+                    })}
                   </div>
                 );
               })}
