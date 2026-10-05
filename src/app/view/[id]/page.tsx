@@ -3,29 +3,6 @@
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Loader2, Download, CheckCircle, AlertCircle } from "lucide-react";
-import dynamic from "next/dynamic";
-
-// Dynamically import react-pdf components to avoid SSR issues
-const Document = dynamic(
-  () => import("react-pdf").then((mod) => mod.Document),
-  { ssr: false }
-);
-const Page = dynamic(
-  () => import("react-pdf").then((mod) => mod.Page),
-  { ssr: false }
-);
-
-// Setup PDF.js worker — local /public file (not CDN)
-if (typeof window !== "undefined") {
-  import("react-pdf").then(({ pdfjs }) => {
-    pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
-  });
-}
-
-// Helper for dedup keys — rounds to 5px so tiny coordinate
-// differences still match (percent-based vs pixel-based).
-const renderKey = (page: number, x: number, y: number) =>
-  `${page}-${Math.round(x / 5)}-${Math.round(y / 5)}`;
 
 export default function ViewDocumentPage() {
   const { id } = useParams<{ id: string }>();
@@ -33,8 +10,7 @@ export default function ViewDocumentPage() {
 
   const [loading, setLoading] = useState(true);
   const [meeting, setMeeting] = useState<any>(null);
-  const [blobUrl, setBlobUrl] = useState("");
-  const [numPages, setNumPages] = useState(0);
+  const [blobUrl, setBlobUrl] = useState<string>("");
   const [error, setError] = useState("");
 
   // ─── Fetch document + PDF blob ────────────────────────────────
@@ -76,7 +52,9 @@ export default function ViewDocumentPage() {
         if (pdfRes.ok) {
           const blob = await pdfRes.blob();
           if (cancelled) return;
-          localBlobUrl = URL.createObjectURL(blob);
+          // Force correct MIME type for the browser's PDF viewer
+          const pdfBlob = new Blob([blob], { type: "application/pdf" });
+          localBlobUrl = URL.createObjectURL(pdfBlob);
           setBlobUrl(localBlobUrl);
         } else {
           const errorData = await pdfRes.json().catch(() => ({}));
@@ -136,65 +114,6 @@ export default function ViewDocumentPage() {
       alert("Failed to download PDF");
     }
   };
-
-  // ─── Collect all full signatures (fallback source) ─────────────
-  const allSignatures: Array<{
-    id: string;
-    page: number;
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    signature: string;
-    signerName: string;
-  }> = [];
-
-  // ─── Collect all initial signatures (fallback source) ─────────
-  const allInitialSignatures: Array<{
-    id: string;
-    page: number;
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    signature: string;
-    signerName: string;
-  }> = [];
-
-  if (meeting?.participants) {
-    meeting.participants
-      .filter((p: any) => p.signed)
-      .forEach((p: any) => {
-        if (p.signaturePositions && Array.isArray(p.signaturePositions)) {
-          p.signaturePositions.forEach((pos: any) => {
-            allSignatures.push({
-              ...pos,
-              signature: p.signature,
-              signerName: p.name || p.email,
-            });
-          });
-        }
-        if (
-          p.initialSignaturePositions &&
-          Array.isArray(p.initialSignaturePositions)
-        ) {
-          p.initialSignaturePositions.forEach((pos: any) => {
-            allInitialSignatures.push({
-              ...pos,
-              signature: p.initialSignature,
-              signerName: p.name || p.email,
-            });
-          });
-        }
-      });
-  }
-
-  // ─── Dedup sets ────────────────────────────────────────────────
-  // These live OUTSIDE the page loop so they persist across pages.
-  // Order: fields loop renders first (with paginated key), then the
-  // freeform loops check and skip anything already drawn.
-  const renderedSignatureKeys = new Set<string>();
-  const renderedInitialKeys = new Set<string>();
 
   // ─── Loading state ─────────────────────────────────────────────
   if (loading) {
@@ -257,11 +176,11 @@ export default function ViewDocumentPage() {
     );
   }
 
-  // ─── Success state ─────────────────────────────────────────────
+  // ─── Success state — native browser PDF viewer ────────────────
   return (
-    <div className="min-h-screen bg-[#f0f2f5] flex flex-col">
+    <div className="h-screen bg-[#f0f2f5] flex flex-col">
       {/* Header */}
-      <header className="bg-white border-b px-8 py-4 shadow-sm sticky top-0 z-50">
+      <header className="bg-white border-b px-8 py-4 shadow-sm shrink-0 z-50">
         <div className="max-w-6xl mx-auto flex justify-between items-center">
           <div>
             <h1 className="text-xl font-bold text-gray-900">
@@ -292,240 +211,19 @@ export default function ViewDocumentPage() {
         </div>
       </header>
 
-      {/* Document Viewer */}
-      <main className="flex-1 overflow-auto p-8 flex justify-center bg-[#e2e8f0]">
-        <div className="max-w-3xl">
-          {blobUrl && (
-            <Document
-              file={blobUrl}
-              onLoadSuccess={(pdf) => setNumPages(pdf.numPages)}
-              loading={<Loader2 className="animate-spin" />}
-            >
-              {Array.from({ length: numPages }, (_, i) => {
-                const pageNum = i + 1;
-
-                // Filter signatures & initials for this page
-                const pageSignatures = allSignatures.filter(
-                  (sig) => sig.page === pageNum
-                );
-                const pageInitials = allInitialSignatures.filter(
-                  (sig) => sig.page === pageNum
-                );
-
-                return (
-                  <div key={pageNum} className="mb-6 shadow-xl relative">
-                    <Page
-                      pageNumber={pageNum}
-                      width={700}
-                      renderTextLayer={false}
-                      renderAnnotationLayer={false}
-                    />
-
-                    {/* ─── Primary source: meeting.fields ─────── */}
-                    {meeting?.fields &&
-                      Array.isArray(meeting.fields) &&
-                      meeting.fields
-                        .filter((f: any) => f.page === pageNum)
-                        .map((field: any, idx: number) => {
-                          const fieldOwner = meeting.participants?.find(
-                            (p: any) => {
-                              const fieldRecipient =
-                                field.recipientName?.toLowerCase() || "";
-                              const pName = p.name?.toLowerCase() || "";
-                              const pEmail = p.email?.toLowerCase() || "";
-                              return (
-                                fieldRecipient === pName ||
-                                fieldRecipient === pEmail ||
-                                pName.includes(fieldRecipient) ||
-                                fieldRecipient.includes(pName)
-                              );
-                            }
-                          );
-                          const ownerSigned = fieldOwner?.signed;
-
-                          // ─── Signature placeholder ──────────────
-                          if (
-                            field.type === "signature" &&
-                            ownerSigned &&
-                            fieldOwner?.signature
-                          ) {
-                            // Register this position in the dedup set
-                            const pxX = field.xPct * 700;
-                            const pxY = field.yPct * 900;
-                            const key = renderKey(
-                              field.page,
-                              pxX,
-                              pxY
-                            );
-                            if (renderedSignatureKeys.has(key)) return null;
-                            renderedSignatureKeys.add(key);
-
-                            return (
-                              <div
-                                key={field.id || idx}
-                                className="absolute"
-                                style={{
-                                  left: `${field.xPct * 100}%`,
-                                  top: `${field.yPct * 100}%`,
-                                  width: `${field.wPct * 100}%`,
-                                  height: `${field.hPct * 100}%`,
-                                }}
-                              >
-                                <div className="w-full h-full flex items-center justify-center p-1">
-                                  <img
-                                    src={fieldOwner.signature}
-                                    alt="signature"
-                                    className="max-w-full max-h-full object-contain"
-                                  />
-                                </div>
-                              </div>
-                            );
-                          }
-
-                          // ─── Initial placeholder ────────────────
-                          if (
-                            field.type === "initial" &&
-                            ownerSigned &&
-                            fieldOwner?.initialSignature
-                          ) {
-                            const pxX = field.xPct * 700;
-                            const pxY = field.yPct * 900;
-                            const key = renderKey(
-                              field.page,
-                              pxX,
-                              pxY
-                            );
-                            if (renderedInitialKeys.has(key)) return null;
-                            renderedInitialKeys.add(key);
-
-                            return (
-                              <div
-                                key={field.id || idx}
-                                className="absolute"
-                                style={{
-                                  left: `${field.xPct * 100}%`,
-                                  top: `${field.yPct * 100}%`,
-                                  width: `${field.wPct * 100}%`,
-                                  height: `${field.hPct * 100}%`,
-                                }}
-                              >
-                                <div className="w-full h-full flex items-center justify-center p-1">
-                                  <img
-                                    src={fieldOwner.initialSignature}
-                                    alt="initial signature"
-                                    className="max-w-full max-h-full object-contain"
-                                  />
-                                </div>
-                              </div>
-                            );
-                          }
-
-                          // ─── Name placeholder ───────────────────
-                          if (
-                            field.type === "name" &&
-                            ownerSigned &&
-                            fieldOwner?.name
-                          ) {
-                            return (
-                              <div
-                                key={field.id || idx}
-                                className="absolute flex items-center justify-center h-full text-sm font-semibold text-gray-800"
-                                style={{
-                                  left: `${field.xPct * 100}%`,
-                                  top: `${field.yPct * 100}%`,
-                                  width: `${field.wPct * 100}%`,
-                                  height: `${field.hPct * 100}%`,
-                                }}
-                              >
-                                {fieldOwner.name}
-                              </div>
-                            );
-                          }
-
-                          // ─── Date placeholder ───────────────────
-                          if (
-                            field.type === "date" &&
-                            ownerSigned &&
-                            fieldOwner?.signedAt
-                          ) {
-                            return (
-                              <div
-                                key={field.id || idx}
-                                className="absolute flex items-center justify-center h-full text-xs text-gray-700"
-                                style={{
-                                  left: `${field.xPct * 100}%`,
-                                  top: `${field.yPct * 100}%`,
-                                  width: `${field.wPct * 100}%`,
-                                  height: `${field.hPct * 100}%`,
-                                }}
-                              >
-                                {new Date(
-                                  fieldOwner.signedAt
-                                ).toLocaleDateString()}
-                              </div>
-                            );
-                          }
-
-                          return null;
-                        })}
-
-                    {/* ─── Fallback: freeform full signatures ─── */}
-                    {pageSignatures.map((sig) => {
-                      const key = renderKey(sig.page, sig.x, sig.y);
-                      if (renderedSignatureKeys.has(key)) return null;
-                      renderedSignatureKeys.add(key);
-
-                      return (
-                        <div
-                          key={sig.id}
-                          className="absolute"
-                          style={{
-                            left: `${sig.x}px`,
-                            top: `${sig.y}px`,
-                            width: `${sig.width}px`,
-                            height: `${sig.height}px`,
-                          }}
-                        >
-                          <img
-                            src={sig.signature}
-                            alt="signature"
-                            className="w-full h-full object-contain"
-                          />
-                        </div>
-                      );
-                    })}
-
-                    {/* ─── Fallback: freeform initial signatures ── */}
-                    {pageInitials.map((sig) => {
-                      const key = renderKey(sig.page, sig.x, sig.y);
-                      if (renderedInitialKeys.has(key)) return null;
-                      renderedInitialKeys.add(key);
-
-                      return (
-                        <div
-                          key={sig.id}
-                          className="absolute"
-                          style={{
-                            left: `${sig.x}px`,
-                            top: `${sig.y}px`,
-                            width: `${sig.width}px`,
-                            height: `${sig.height}px`,
-                          }}
-                        >
-                          <img
-                            src={sig.signature}
-                            alt="initial signature"
-                            className="w-full h-full object-contain"
-                          />
-                        </div>
-                      );
-                    })}
-                  </div>
-                );
-              })}
-            </Document>
-          )}
-        </div>
+      {/* Native PDF viewer */}
+      <main className="flex-1 bg-gray-200 overflow-hidden">
+        {blobUrl ? (
+          <iframe
+            src={blobUrl}
+            className="w-full h-full border-0"
+            title={meeting?.title || "Document"}
+          />
+        ) : (
+          <div className="w-full h-full flex items-center justify-center text-gray-500">
+            <Loader2 className="animate-spin text-indigo-600" size={32} />
+          </div>
+        )}
       </main>
     </div>
   );
