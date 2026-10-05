@@ -115,25 +115,30 @@ export async function POST(
     let sentCount = 0;
     let skippedCount = 0;
 
+    // Load organizer name for email
     const organizer = await db
       .collection("users")
       .findOne({ _id: new ObjectId(decoded.id) });
     const organizerName = organizer?.name || "Document Organizer";
     const organizerEmail = organizer?.email || "";
 
+    // Snapshot participants for modification
     const updatedParticipants = [...meeting.participants];
 
     for (let i = 0; i < updatedParticipants.length; i++) {
       const p = updatedParticipants[i];
 
-      // Only Signers
+      // Only Signers (not CCs)
       if (p.role !== "Signer") continue;
 
       // Skip already-signed
       if (p.signed) continue;
 
-      // If email filter, only process those emails
-      if (emailsFilter && !emailsFilter.includes(p.email.toLowerCase())) {
+      // If an email filter is provided, only process those emails
+      if (
+        emailsFilter &&
+        !emailsFilter.includes(p.email.toLowerCase())
+      ) {
         continue;
       }
 
@@ -154,7 +159,7 @@ export async function POST(
         }
       }
 
-      // ─── Signing token ─────────────────────────────────────
+      // ─── Generate fresh signing token ──────────────────────
       let signingToken: string;
       try {
         signingToken = jwt.sign(
@@ -181,6 +186,7 @@ export async function POST(
         process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000"
       }/sign/${meetingId}?token=${signingToken}`;
 
+      // ─── Count of signers who completed (for social proof) ─
       const totalSigners = updatedParticipants.filter(
         (x: any) => x.role === "Signer"
       ).length;
@@ -240,11 +246,10 @@ export async function POST(
           `,
         });
 
-        // Mark as reminded + increment counter
+        // Mark as reminded
         updatedParticipants[i] = {
           ...p,
           lastRemindedAt: new Date(),
-          reminderCount: (p.reminderCount || 0) + 1,
         };
 
         details.push({ email: p.email, status: "sent" });
@@ -259,7 +264,7 @@ export async function POST(
       }
     }
 
-    // ─── 7. Persist ──────────────────────────────────────────
+    // ─── 7. Persist lastRemindedAt ───────────────────────────
     if (sentCount > 0) {
       await db.collection("meetings").updateOne(
         { _id: new ObjectId(meetingId) },

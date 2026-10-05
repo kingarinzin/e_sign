@@ -22,6 +22,7 @@ interface Participant {
   isCurrent?: boolean;
   order?: number;
   lastRemindedAt?: string;
+  reminderCount?: number;
 }
 
 interface Props {
@@ -49,14 +50,18 @@ function timeAgo(dateStr?: string): string {
 
 function shortDateTime(dateStr?: string): string {
   if (!dateStr) return "—";
-  return new Date(dateStr).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-  }) + ", " + new Date(dateStr).toLocaleTimeString("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  });
+  return (
+    new Date(dateStr).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+    }) +
+    ", " +
+    new Date(dateStr).toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    })
+  );
 }
 
 export default function SignerTrace({
@@ -98,8 +103,7 @@ export default function SignerTrace({
   const overdue = useMemo(() => {
     if (!meeting.sentAt) return false;
     const days =
-      (Date.now() - new Date(meeting.sentAt).getTime()) /
-      (1000 * 60 * 60 * 24);
+      (Date.now() - new Date(meeting.sentAt).getTime()) / (1000 * 60 * 60 * 24);
     return days >= 3;
   }, [meeting.sentAt]);
 
@@ -187,7 +191,6 @@ export default function SignerTrace({
     const cooldown = cooldownInfo(p);
     const isOverdueRow = !p.signed && overdue;
 
-    // Left accent color
     const accentColor = p.signed
       ? "border-l-green-500"
       : isOverdueRow
@@ -196,21 +199,16 @@ export default function SignerTrace({
       ? "border-l-amber-500"
       : "border-l-gray-300";
 
-    // Icon
     const icon = p.signed ? (
       <CheckCircle2 size={16} className="text-green-600 shrink-0" />
     ) : isOverdueRow ? (
       <AlertCircle size={16} className="text-red-600 shrink-0" />
     ) : p.isCurrent ? (
-      <Clock
-        size={16}
-        className="text-amber-600 shrink-0 animate-pulse"
-      />
+      <Clock size={16} className="text-amber-600 shrink-0 animate-pulse" />
     ) : (
       <Clock size={16} className="text-gray-400 shrink-0" />
     );
 
-    // Status badge
     const badge = p.signed ? (
       <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold whitespace-nowrap">
         Signed
@@ -229,12 +227,17 @@ export default function SignerTrace({
       </span>
     );
 
-    // Metadata line
+    // ─── Metadata line with reminder count ────────────────────
     const metaParts: string[] = [p.email];
     if (p.role === "Signer" || !p.role) metaParts.push("Signer");
     if (p.signed && p.signedAt) metaParts.push(`Signed ${timeAgo(p.signedAt)}`);
-    if (!p.signed && p.lastRemindedAt)
-      metaParts.push(`Reminded ${timeAgo(p.lastRemindedAt)}`);
+    if (!p.signed && p.lastRemindedAt) {
+      const count = p.reminderCount || 0;
+      const timesLabel = count === 1 ? "1 time" : `${count} times`;
+      metaParts.push(
+        `Reminded ${timesLabel} · last ${timeAgo(p.lastRemindedAt)}`
+      );
+    }
     if (!p.signed && !p.lastRemindedAt && meeting.sentAt)
       metaParts.push(`Sent ${timeAgo(meeting.sentAt)}`);
     if (!p.signed && p.isCurrent) metaParts.push("Waiting for turn");
@@ -245,10 +248,8 @@ export default function SignerTrace({
       >
         <div className="flex items-start justify-between gap-3">
           <div className="flex items-start gap-3 flex-1 min-w-0">
-            {/* Icon */}
             <div className="mt-0.5">{icon}</div>
 
-            {/* Name + meta */}
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 flex-wrap">
                 <span className="text-sm font-semibold text-gray-900 truncate">
@@ -267,7 +268,6 @@ export default function SignerTrace({
             </div>
           </div>
 
-          {/* Right side: timestamp or remind button */}
           <div className="shrink-0 flex items-center gap-2">
             {p.signed && p.signedAt && (
               <span className="text-[11px] text-gray-400 whitespace-nowrap hidden sm:inline">
@@ -284,7 +284,11 @@ export default function SignerTrace({
                     ? "bg-gray-100 text-gray-400 cursor-not-allowed"
                     : "bg-white border border-red-300 text-red-600 hover:bg-red-50"
                 }`}
-                title={cooldown.active ? `Wait ${cooldown.minutesLeft} min` : "Send reminder"}
+                title={
+                  cooldown.active
+                    ? `Wait ${cooldown.minutesLeft} min`
+                    : "Send reminder"
+                }
               >
                 {remindingEmail === p.email ? (
                   <Loader2 size={11} className="animate-spin" />
@@ -311,7 +315,6 @@ export default function SignerTrace({
     <div className="flex flex-col h-full">
       {/* ─── Progress header ─────────────────────────────── */}
       <div className="px-5 py-4 border-b border-gray-200 bg-gradient-to-br from-white to-gray-50 shrink-0">
-        {/* Title row */}
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2">
             <Users size={14} className="text-indigo-600" />
@@ -324,7 +327,6 @@ export default function SignerTrace({
           </span>
         </div>
 
-        {/* Progress bar */}
         <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden mb-3">
           <div
             className={`h-full rounded-full transition-all duration-500 ${
@@ -334,7 +336,6 @@ export default function SignerTrace({
           />
         </div>
 
-        {/* Stat row */}
         <div className="flex items-center gap-3 text-[11px] text-gray-600 flex-wrap">
           <span className="flex items-center gap-1">
             <CheckCircle2 size={11} className="text-green-600" />
@@ -344,9 +345,7 @@ export default function SignerTrace({
           <span className="text-gray-300">·</span>
           <span className="flex items-center gap-1">
             <Clock size={11} className="text-amber-600" />
-            <span className="font-semibold text-gray-900">
-              {unsignedCount}
-            </span>{" "}
+            <span className="font-semibold text-gray-900">{unsignedCount}</span>{" "}
             pending
           </span>
           {lastActivity && (
@@ -361,7 +360,7 @@ export default function SignerTrace({
         </div>
       </div>
 
-      {/* ─── Feedback messages ──────────────────────────────── */}
+      {/* ─── Feedback ─────────────────────────────────────── */}
       {message && (
         <div className="px-5 py-2 bg-green-50 border-b border-green-100 text-xs text-green-800 flex items-center gap-2 shrink-0">
           <MailCheck size={12} /> {message}
@@ -373,9 +372,8 @@ export default function SignerTrace({
         </div>
       )}
 
-      {/* ─── Body ──────────────────────────────────────────── */}
+      {/* ─── Body ─────────────────────────────────────────── */}
       <div className="flex-1 overflow-y-auto bg-gray-50 px-5 py-4 space-y-6">
-        {/* ─── Pending section ─────────────────────────────── */}
         {pendingSigners.length > 0 && (
           <div>
             <div className="flex items-center justify-between mb-2">
@@ -408,7 +406,6 @@ export default function SignerTrace({
           </div>
         )}
 
-        {/* ─── Signed section ──────────────────────────────── */}
         {signedSigners.length > 0 && (
           <div>
             <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-2 flex items-center gap-1">
@@ -423,7 +420,6 @@ export default function SignerTrace({
           </div>
         )}
 
-        {/* ─── Empty state ─────────────────────────────────── */}
         {signers.length === 0 && (
           <div className="flex flex-col items-center justify-center py-12 text-gray-400">
             <Users size={32} className="mb-2" />
@@ -431,7 +427,6 @@ export default function SignerTrace({
           </div>
         )}
 
-        {/* ─── CC section ──────────────────────────────────── */}
         {ccs.length > 0 && (
           <div>
             <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-2">
@@ -460,7 +455,6 @@ export default function SignerTrace({
           </div>
         )}
 
-        {/* ─── Completion banner ───────────────────────────── */}
         {allSigned && (
           <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 flex items-center gap-2">
             <CheckCircle2 size={16} className="text-green-600 shrink-0" />

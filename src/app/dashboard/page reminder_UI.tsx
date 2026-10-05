@@ -12,17 +12,9 @@ import {
   Bell,
   LayoutGrid,
   ChevronRight,
-  ChevronDown,
   FilePlus2,
   PenSquare,
   FileText,
-  Users,
-  Send,
-  Eye,
-  Download,
-  Timer,
-  MailCheck,
-  TrendingUp,
 } from "lucide-react";
 
 const PdfPreviewModal = dynamic(
@@ -40,16 +32,11 @@ interface Meeting {
     email: string;
     signed: boolean;
     isCurrent?: boolean;
-    role?: string;
-    signedAt?: string;
-    lastRemindedAt?: string;
-    reminderCount?: number;
   }[];
   sentAt?: string;
   currentSignerIndex?: number;
   createdAt?: string;
   description?: string;
-  organizerId?: string;
 }
 
 function shortDate(dateStr?: string): string {
@@ -59,16 +46,6 @@ function shortDate(dateStr?: string): string {
     day: "numeric",
     year: "numeric",
   });
-}
-
-function timeAgo(dateStr?: string): string {
-  if (!dateStr) return "";
-  const diff = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-  if (diff < 60) return "just now";
-  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
-  if (diff < 604800) return `${Math.floor(diff / 86400)}d ago`;
-  return new Date(dateStr).toLocaleDateString();
 }
 
 export default function Dashboard() {
@@ -83,9 +60,6 @@ export default function Dashboard() {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [previewMeeting, setPreviewMeeting] = useState<Meeting | null>(null);
   const [pageWidth, setPageWidth] = useState(500);
-
-  // Expanded rows (Set of meeting IDs)
-  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
 
   const sigInputRef = useRef<HTMLInputElement>(null);
   const initialsInputRef = useRef<HTMLInputElement>(null);
@@ -149,9 +123,7 @@ export default function Dashboard() {
   }, [router]);
 
   const getSigningProgress = (meeting: Meeting) => {
-    const signers = meeting.participants.filter(
-      (p) => p.role === "Signer" || !p.role
-    );
+    const signers = meeting.participants.filter((p) => p.signed !== undefined);
     const signed = signers.filter((p) => p.signed).length;
     return { signed, total: signers.length };
   };
@@ -268,15 +240,6 @@ export default function Dashboard() {
       }
     };
     reader.readAsDataURL(file);
-  };
-
-  const toggleRow = (id: string) => {
-    setExpandedRows((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
   };
 
   const handlePreviewDocument = (meeting: Meeting) => {
@@ -410,7 +373,6 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* ⬇️ Recent Activity with inline expandable rows */}
         <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
           <div className="px-4 py-3 border-b border-gray-100 flex justify-between items-center">
             <h3 className="text-sm font-bold text-gray-800">
@@ -429,43 +391,58 @@ export default function Dashboard() {
                 No recent activity
               </div>
             ) : (
-              recentDocuments.slice(0, 5).map((meeting) => (
-                <ExpandableRow
-                  key={meeting._id}
-                  meeting={meeting}
-                  isExpanded={expandedRows.has(meeting._id)}
-                  onToggle={() => toggleRow(meeting._id)}
-                  onViewPdf={() => handlePreviewDocument(meeting)}
-                  onSign={() =>
-                    router.push(`/sign/${meeting._id}`)
-                  }
-                  onDownload={async () => {
-                    const token = localStorage.getItem("token");
-                    const res = await fetch(
-                      `/api/meetings/${meeting._id}/download`,
-                      {
-                        method: "POST",
-                        headers: { Authorization: `Bearer ${token}` },
-                      }
-                    );
-                    if (!res.ok) {
-                      alert("Failed to download PDF");
-                      return;
-                    }
-                    const blob = await res.blob();
-                    const url = URL.createObjectURL(blob);
-                    const link = document.createElement("a");
-                    link.href = url;
-                    link.download = `${meeting.title || "document"}.pdf`;
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                    URL.revokeObjectURL(url);
-                  }}
-                  currentUserEmail={userEmail}
-                  currentUserId={currentUserId}
-                />
-              ))
+              recentDocuments.slice(0, 5).map((meeting) => {
+                const progress = getSigningProgress(meeting);
+                return (
+                  <button
+                    key={meeting._id}
+                    onClick={() => handlePreviewDocument(meeting)}
+                    className="w-full text-left px-4 py-3 hover:bg-gray-50 transition cursor-pointer group"
+                  >
+                    <div className="flex justify-between items-start gap-3">
+                      <div className="flex flex-col flex-1 min-w-0">
+                        <div className="flex items-baseline gap-2 flex-wrap">
+                          <span className="text-[11px] font-medium text-gray-500 whitespace-nowrap">
+                            {shortDate(meeting.sentAt || meeting.createdAt)}
+                          </span>
+                          <span className="text-sm font-medium text-gray-800 truncate group-hover:text-indigo-700">
+                            {meeting.title}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center gap-2 mt-1 flex-wrap">
+                          <span className="text-[10px] text-gray-500 truncate">
+                            drafted by {getDraftedBy(meeting)}
+                          </span>
+
+                          {meeting.status === "Completed" && (
+                            <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-semibold whitespace-nowrap">
+                              ✓ Completed
+                            </span>
+                          )}
+
+                          {meeting.status === "Sent" && (
+                            <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-semibold whitespace-nowrap">
+                              {progress.signed}/{progress.total} signed
+                            </span>
+                          )}
+
+                          {meeting.status === "Draft" && (
+                            <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full font-semibold whitespace-nowrap">
+                              Draft
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      <ChevronRight
+                        size={14}
+                        className="text-gray-300 shrink-0 mt-1 opacity-0 group-hover:opacity-100 transition-opacity"
+                      />
+                    </div>
+                  </button>
+                );
+              })
             )}
           </div>
         </div>
@@ -600,7 +577,7 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ─── PDF Preview Modal (opens only via "View PDF") ──── */}
+      {/* ─── PDF Preview Modal ──────────────────────────────── */}
       {previewMeeting && (
         <PdfPreviewModal
           meeting={previewMeeting}
@@ -689,7 +666,9 @@ function RecentDraftsCard({
           <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center mb-2">
             <FileText size={14} className="text-gray-400" />
           </div>
-          <p className="text-[11px] text-gray-400 text-center">No drafts yet</p>
+          <p className="text-[11px] text-gray-400 text-center">
+            No drafts yet
+          </p>
         </div>
       ) : (
         <div className="flex-1 space-y-1.5 overflow-hidden">
@@ -769,457 +748,6 @@ function InfoBlock({ title, lines }: { title: string; lines: string[] }) {
       ))}
     </div>
   );
-}
-
-// ─── ExpandableRow ─────────────────────────────────────────────
-function ExpandableRow({
-  meeting,
-  isExpanded,
-  onToggle,
-  onViewPdf,
-  onSign,
-  onDownload,
-  currentUserEmail,
-  currentUserId,
-}: {
-  meeting: Meeting;
-  isExpanded: boolean;
-  onToggle: () => void;
-  onViewPdf: () => void;
-  onSign: () => void;
-  onDownload: () => void;
-  currentUserEmail: string | null;
-  currentUserId: string | null;
-}) {
-  const [showAllSigners, setShowAllSigners] = useState(false);
-  const [reminding, setReminding] = useState(false);
-  const [remindingEmail, setRemindingEmail] = useState<string | null>(null);
-  const [feedback, setFeedback] = useState("");
-  const [error, setError] = useState("");
-
-  // Organizer check
-  const organizerIdStr = meeting.organizerId
-    ? typeof meeting.organizerId === "string"
-      ? meeting.organizerId
-      : (meeting.organizerId as any).toString()
-    : null;
-  const isOrganizer = !!currentUserId && organizerIdStr === currentUserId;
-
-  // Signers
-  const signers = meeting.participants.filter(
-    (p) => p.role === "Signer" || !p.role
-  );
-  const signedCount = signers.filter((p) => p.signed).length;
-  const totalSigners = signers.length;
-  const allSigned = totalSigners > 0 && signedCount === totalSigners;
-  const unsignedCount = totalSigners - signedCount;
-  const progressPct =
-    totalSigners > 0 ? (signedCount / totalSigners) * 100 : 0;
-
-  // Is current user the next signer?
-  const isMyTurn = signers.some(
-    (p) =>
-      p.email.toLowerCase() === (currentUserEmail || "").toLowerCase() &&
-      !p.signed &&
-      p.isCurrent
-  );
-
-  const overdue = (() => {
-    if (!meeting.sentAt) return false;
-    const days =
-      (Date.now() - new Date(meeting.sentAt).getTime()) / (1000 * 60 * 60 * 24);
-    return days >= 3;
-  })();
-
-  const signersToShow = showAllSigners ? signers : signers.slice(0, 5);
-
-  const cooldownInfo = (p: any) => {
-    if (!p.lastRemindedAt) return { active: false, minutesLeft: 0 };
-    const elapsed = Date.now() - new Date(p.lastRemindedAt).getTime();
-    const cooldownMs = 15 * 60 * 1000;
-    if (elapsed >= cooldownMs) return { active: false, minutesLeft: 0 };
-    return {
-      active: true,
-      minutesLeft: Math.ceil((cooldownMs - elapsed) / 60000),
-    };
-  };
-
-  const sendReminder = async (emails?: string[]) => {
-    if (emails && emails.length === 1) setRemindingEmail(emails[0]);
-    else setReminding(true);
-    setFeedback("");
-    setError("");
-
-    try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`/api/meetings/${meeting._id}/remind`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(emails ? { emails } : {}),
-      });
-
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to send reminders");
-
-      const sentCount = data.sent || 0;
-      const skippedCount = data.skipped || 0;
-
-      if (sentCount > 0) {
-        let msg = `Reminder sent to ${sentCount} signer${
-          sentCount > 1 ? "s" : ""
-        }.`;
-        if (skippedCount > 0) msg += ` ${skippedCount} skipped (cooldown).`;
-        setFeedback(msg);
-      } else if (skippedCount > 0) {
-        setFeedback(
-          `${skippedCount} signer(s) in cooldown. Try again later.`
-        );
-      } else {
-        setFeedback("No reminders sent.");
-      }
-      setTimeout(() => setFeedback(""), 5000);
-    } catch (err: any) {
-      setError(err.message || "Failed to send reminder");
-      setTimeout(() => setError(""), 6000);
-    } finally {
-      setReminding(false);
-      setRemindingEmail(null);
-    }
-  };
-
-  return (
-    <div className="transition">
-      {/* ─── Collapsed header row ─────────────────────────── */}
-      <div
-        onClick={onToggle}
-        className="px-4 py-3 hover:bg-gray-50 transition cursor-pointer group"
-      >
-        <div className="flex justify-between items-start gap-3">
-          <div className="flex flex-col flex-1 min-w-0">
-            <div className="flex items-baseline gap-2 flex-wrap">
-              <span className="text-[11px] font-medium text-gray-500 whitespace-nowrap">
-                {shortDate(meeting.sentAt || meeting.createdAt)}
-              </span>
-              <span className="text-sm font-medium text-gray-800 truncate group-hover:text-indigo-700">
-                {meeting.title}
-              </span>
-            </div>
-            <div className="flex items-center gap-2 mt-1 flex-wrap">
-              <span className="text-[10px] text-gray-500 truncate">
-                drafted by {getDraftedByStatic(meeting)}
-              </span>
-              {meeting.status === "Completed" ? (
-                <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-semibold whitespace-nowrap">
-                  ✓ Completed
-                </span>
-              ) : meeting.status === "Sent" ? (
-                <span className="text-[10px] bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded-full font-semibold whitespace-nowrap">
-                  {signedCount}/{totalSigners} signed
-                </span>
-              ) : (
-                <span className="text-[10px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full font-semibold whitespace-nowrap">
-                  {meeting.status}
-                </span>
-              )}
-            </div>
-          </div>
-          <ChevronDown
-            size={16}
-            className={`text-gray-400 shrink-0 mt-1 transition-transform ${
-              isExpanded ? "rotate-180" : ""
-            }`}
-          />
-        </div>
-      </div>
-
-      {/* ─── Expanded body ────────────────────────────────── */}
-      {isExpanded && (
-        <div className="px-4 pb-4 bg-gray-50 border-t border-gray-100">
-          {/* Progress bar */}
-          <div className="pt-3 pb-3">
-            <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
-                Signing Progress
-              </span>
-              <span className="text-[10px] font-bold text-gray-700">
-                {Math.round(progressPct)}%
-              </span>
-            </div>
-            <div className="w-full bg-gray-200 rounded-full h-1.5 overflow-hidden">
-              <div
-                className={`h-full rounded-full transition-all ${
-                  allSigned ? "bg-green-500" : "bg-blue-500"
-                }`}
-                style={{ width: `${progressPct}%` }}
-              />
-            </div>
-            <div className="flex items-center gap-2 mt-2 text-[10px] text-gray-500">
-              <span className="flex items-center gap-1">
-                <CheckCircle2 size={10} className="text-green-600" />
-                <span className="font-semibold">{signedCount}</span> signed
-              </span>
-              <span className="text-gray-300">·</span>
-              <span className="flex items-center gap-1">
-                <Clock size={10} className="text-amber-600" />
-                <span className="font-semibold">{unsignedCount}</span> pending
-              </span>
-            </div>
-          </div>
-
-          {/* Feedback */}
-          {feedback && (
-            <div className="mb-2 px-2 py-1.5 bg-green-100 border border-green-200 rounded text-[10px] text-green-800 flex items-center gap-1">
-              <MailCheck size={10} /> {feedback}
-            </div>
-          )}
-          {error && (
-            <div className="mb-2 px-2 py-1.5 bg-red-100 border border-red-200 rounded text-[10px] text-red-800 flex items-center gap-1">
-              <AlertCircle size={10} /> {error}
-            </div>
-          )}
-
-          {/* Signers list */}
-          {signers.length > 0 && (
-            <div className="bg-white border border-gray-200 rounded-lg overflow-hidden mb-3">
-              <div className="divide-y divide-gray-100">
-                {signersToShow.map((p, idx) => {
-                  const isMe =
-                    currentUserEmail &&
-                    p.email.toLowerCase() === currentUserEmail.toLowerCase();
-                  const cooldown = cooldownInfo(p);
-                  const isOverdueRow = !p.signed && overdue;
-
-                  // Left accent
-                  const accentClass = p.signed
-                    ? "border-l-green-500"
-                    : isOverdueRow
-                    ? "border-l-red-500"
-                    : p.isCurrent
-                    ? "border-l-amber-500"
-                    : "border-l-gray-300";
-
-                  // Meta line
-                  const metaParts: string[] = [p.email];
-                  if (p.signed && p.signedAt)
-                    metaParts.push(`Signed ${timeAgo(p.signedAt)}`);
-                  if (!p.signed && p.lastRemindedAt) {
-                    const count = p.reminderCount || 0;
-                    const timesLabel =
-                      count === 1 ? "1 time" : `${count} times`;
-                    metaParts.push(
-                      `Reminded ${timesLabel} · last ${timeAgo(
-                        p.lastRemindedAt
-                      )}`
-                    );
-                  }
-                  if (!p.signed && !p.lastRemindedAt && meeting.sentAt)
-                    metaParts.push(`Sent ${timeAgo(meeting.sentAt)}`);
-                  if (!p.signed && p.isCurrent) metaParts.push("Waiting");
-
-                  return (
-                    <div
-                      key={p.email || idx}
-                      className={`border-l-4 ${accentClass} px-3 py-2 ${
-                        isMe ? "bg-indigo-50/40" : ""
-                      }`}
-                    >
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="flex items-start gap-2 flex-1 min-w-0">
-                          {p.signed ? (
-                            <CheckCircle2
-                              size={14}
-                              className="text-green-600 shrink-0 mt-0.5"
-                            />
-                          ) : isOverdueRow ? (
-                            <AlertCircle
-                              size={14}
-                              className="text-red-600 shrink-0 mt-0.5"
-                            />
-                          ) : p.isCurrent ? (
-                            <Clock
-                              size={14}
-                              className="text-amber-600 shrink-0 mt-0.5 animate-pulse"
-                            />
-                          ) : (
-                            <Clock
-                              size={14}
-                              className="text-gray-400 shrink-0 mt-0.5"
-                            />
-                          )}
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-1.5 flex-wrap">
-                              <span className="text-xs font-semibold text-gray-900 truncate">
-                                {p.name}
-                                {isMe && (
-                                  <span className="ml-1 text-indigo-600 font-normal">
-                                    (You)
-                                  </span>
-                                )}
-                              </span>
-                              {p.signed ? (
-                                <span className="text-[9px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full font-bold uppercase whitespace-nowrap">
-                                  Signed
-                                </span>
-                              ) : isOverdueRow ? (
-                                <span className="text-[9px] bg-red-100 text-red-700 px-1.5 py-0.5 rounded-full font-bold uppercase whitespace-nowrap">
-                                  Overdue
-                                </span>
-                              ) : p.isCurrent ? (
-                                <span className="text-[9px] bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full font-bold uppercase whitespace-nowrap">
-                                  Waiting
-                                </span>
-                              ) : (
-                                <span className="text-[9px] bg-gray-100 text-gray-600 px-1.5 py-0.5 rounded-full font-bold uppercase whitespace-nowrap">
-                                  Pending
-                                </span>
-                              )}
-                            </div>
-                            <div className="text-[10px] text-gray-500 mt-0.5 truncate">
-                              {metaParts.join(" · ")}
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Remind button */}
-                        {isOrganizer &&
-                          !p.signed &&
-                          meeting.status === "Sent" && (
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                sendReminder([p.email]);
-                              }}
-                              disabled={
-                                cooldown.active || remindingEmail === p.email
-                              }
-                              className={`shrink-0 text-[10px] font-semibold px-2 py-1 rounded transition cursor-pointer whitespace-nowrap flex items-center gap-1 ${
-                                cooldown.active
-                                  ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                                  : "bg-white border border-red-300 text-red-600 hover:bg-red-50"
-                              }`}
-                              title={
-                                cooldown.active
-                                  ? `Wait ${cooldown.minutesLeft} min`
-                                  : "Send reminder"
-                              }
-                            >
-                              {remindingEmail === p.email ? (
-                                <Loader2
-                                  size={10}
-                                  className="animate-spin"
-                                />
-                              ) : cooldown.active ? (
-                                <>
-                                  <Timer size={10} />
-                                  {cooldown.minutesLeft}m
-                                </>
-                              ) : (
-                                <>
-                                  <Send size={10} />
-                                  Remind
-                                </>
-                              )}
-                            </button>
-                          )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-
-              {/* Show more link */}
-              {signers.length > 5 && !showAllSigners && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setShowAllSigners(true);
-                  }}
-                  className="w-full text-center py-1.5 text-[10px] text-indigo-600 hover:text-indigo-800 hover:bg-indigo-50 font-semibold border-t border-gray-100 cursor-pointer"
-                >
-                  Show {signers.length - 5} more signer
-                  {signers.length - 5 > 1 ? "s" : ""}
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* Action row */}
-          <div className="flex items-center justify-between gap-2 flex-wrap">
-            {/* Left: View PDF / Download */}
-            <div className="flex items-center gap-1.5">
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onViewPdf();
-                }}
-                className="text-[10px] font-semibold text-gray-700 hover:text-indigo-700 bg-white border border-gray-200 hover:border-indigo-300 px-2.5 py-1.5 rounded flex items-center gap-1 cursor-pointer transition"
-              >
-                <Eye size={11} />
-                View PDF
-              </button>
-              {meeting.status === "Completed" && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onDownload();
-                  }}
-                  className="text-[10px] font-semibold text-gray-700 hover:text-indigo-700 bg-white border border-gray-200 hover:border-indigo-300 px-2.5 py-1.5 rounded flex items-center gap-1 cursor-pointer transition"
-                >
-                  <Download size={11} />
-                  Download
-                </button>
-              )}
-              {isOrganizer && !allSigned && meeting.status === "Sent" && (
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    sendReminder();
-                  }}
-                  disabled={reminding}
-                  className="text-[10px] font-semibold text-red-600 hover:text-red-800 bg-white border border-red-200 hover:border-red-300 px-2.5 py-1.5 rounded flex items-center gap-1 cursor-pointer transition disabled:opacity-50"
-                >
-                  {reminding ? (
-                    <>
-                      <Loader2 size={11} className="animate-spin" /> Sending...
-                    </>
-                  ) : (
-                    <>
-                      <Send size={11} /> Remind All ({unsignedCount})
-                    </>
-                  )}
-                </button>
-              )}
-            </div>
-
-            {/* Right: Sign Document */}
-            {isMyTurn && (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onSign();
-                }}
-                className="text-[10px] font-bold bg-red-500 text-white px-3 py-1.5 rounded hover:bg-red-600 flex items-center gap-1 cursor-pointer transition"
-              >
-                <PenSquare size={11} />
-                Sign Document →
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// Helper for draft email (avoid prop drilling)
-function getDraftedByStatic(meeting: Meeting) {
-  if (meeting.participants && meeting.participants.length > 0) {
-    return meeting.participants[0].email;
-  }
-  return "unknown@acc.org.bd";
 }
 
 // ─── GaugeChart ────────────────────────────────────────────────

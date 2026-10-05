@@ -8,7 +8,7 @@ import crypto from "crypto";
 import { ObjectId } from "mongodb";
 import { getUserIdVariants } from "@/lib/auth-helpers";
 
-export const runtime = "nodejs";
+export const runtime = "nodejs"; // IMPORTANT: fs/path require Node runtime
 
 const allowedMimeTypes = new Set([
   "application/pdf",
@@ -48,6 +48,10 @@ function requireUserId(decoded: any) {
  * signature is ~100 KB; a meeting with 11 participants was 6.4 MB. Without
  * this projection the /api/meetings response can be tens of MB per request,
  * causing multi-second page loads.
+ *
+ * The dashboard needs: name, email, role, signed, isCurrent, isExternal,
+ * signedAt, lastRemindedAt, order. Plus organizerId at the meeting level
+ * (for reminder-permission checks).
  */
 const buildMeetingsPipeline = (matchStage: Record<string, any>) => [
   { $match: matchStage },
@@ -62,7 +66,7 @@ const buildMeetingsPipeline = (matchStage: Record<string, any>) => [
       sentAt: 1,
       createdAt: 1,
       currentSignerIndex: 1,
-      organizerId: 1,
+      organizerId: 1,                    // ← ADDED — for organizer check
       participants: {
         $map: {
           input: { $ifNull: ["$participants", []] },
@@ -74,10 +78,9 @@ const buildMeetingsPipeline = (matchStage: Record<string, any>) => [
             signed: "$$p.signed",
             isCurrent: "$$p.isCurrent",
             isExternal: "$$p.isExternal",
-            signedAt: "$$p.signedAt",
-            lastRemindedAt: "$$p.lastRemindedAt",
-            reminderCount: "$$p.reminderCount",
-            order: "$$p.order",
+            signedAt: "$$p.signedAt",              // ← ADDED — signing timestamp
+            lastRemindedAt: "$$p.lastRemindedAt",  // ← ADDED — cooldown info
+            order: "$$p.order",                    // ← ADDED — sequential order
           },
         },
       },
@@ -104,10 +107,13 @@ export async function GET(req: Request) {
     const client = await clientPromise;
     const db = client.db("e_sign_db");
 
+    // Get user's email for participant matching
     const usersDb = db.collection("users");
     const user = await usersDb.findOne({ _id: new ObjectId(decoded.id) });
     const userEmail = user?.email;
 
+    // Run both queries in parallel. Each one uses $project to send only
+    // the fields the dashboard needs.
     const [organizedMeetings, participantMeetings] = await Promise.all([
       db
         .collection("meetings")
@@ -194,6 +200,7 @@ export async function POST(req: Request) {
       );
     }
 
+    // ─── Build cleaned participants (preserves isExternal flag) ──
     const cleanedParticipants = participants.map((p: any) => ({
       name: String(p?.name || "").trim(),
       email: String(p?.email || "").trim(),
