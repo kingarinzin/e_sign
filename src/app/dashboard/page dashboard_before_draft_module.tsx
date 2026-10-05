@@ -14,7 +14,7 @@ import {
   ChevronRight,
   FilePlus2,
   PenSquare,
-  FileText,
+  UserPlus,
 } from "lucide-react";
 
 const PdfPreviewModal = dynamic(
@@ -57,7 +57,6 @@ export default function Dashboard() {
   const [isUploading, setIsUploading] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [userName, setUserName] = useState<string>("");
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [previewMeeting, setPreviewMeeting] = useState<Meeting | null>(null);
   const [pageWidth, setPageWidth] = useState(500);
 
@@ -100,7 +99,6 @@ export default function Dashboard() {
         if (profileRes.ok) {
           const data = await profileRes.json();
           setUserName(data.name || data.email || "User");
-          setCurrentUserId(data._id || data.id || null);
           setSignatureImg(data.signature || null);
           setInitialsImg(data.initialSignature || null);
           if (data.signature)
@@ -197,7 +195,7 @@ export default function Dashboard() {
         const dateB = b.createdAt || "";
         return new Date(dateB).getTime() - new Date(dateA).getTime();
       })
-      .slice(0, 5);
+      .slice(0, 4);
   }, [drafts]);
 
   const gaugeMax = Math.max(sentThisMonth, 4);
@@ -306,6 +304,7 @@ export default function Dashboard() {
           onClick={() => router.push("/dashboard/documents")}
         />
 
+        {/* ⬇️ Sign Pending now redirects to the "I Need to Sign" tab */}
         <ActionCard
           icon={<PenSquare size={16} />}
           title="Sign Pending"
@@ -325,12 +324,12 @@ export default function Dashboard() {
           }
         />
 
-        <RecentDraftsCard
-          drafts={recentDrafts}
-          onViewAll={() => router.push("/dashboard/documents?tab=drafts")}
-          onDraftClick={(draftId) =>
-            router.push(`/dashboard/prepare/${draftId}`)
-          }
+        <ActionCard
+          icon={<UserPlus size={16} />}
+          title="Add A Contact"
+          description="Manage users and contacts for faster document sending."
+          buttonLabel="Manage Users"
+          onClick={() => router.push("/admin/all-users")}
         />
       </div>
 
@@ -577,15 +576,77 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ─── PDF Preview Modal ──────────────────────────────── */}
+      {/* ─── Templates + Recent Drafts ───────────────────────── */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 flex justify-between items-center">
+            <h3 className="text-sm font-bold text-gray-800">
+              Most Used Templates
+            </h3>
+            <button
+              disabled
+              className="text-xs text-gray-400 font-semibold cursor-not-allowed"
+            >
+              View All Templates
+            </button>
+          </div>
+          <div className="px-4 py-10 text-center">
+            <div className="w-12 h-12 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-3">
+              <LayoutGrid size={20} className="text-gray-400" />
+            </div>
+            <p className="text-xs text-gray-500">
+              You haven't used any templates yet.
+            </p>
+          </div>
+        </div>
+
+        <div className="bg-white border border-gray-200 rounded-lg overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 flex justify-between items-center">
+            <h3 className="text-sm font-bold text-gray-800">Recent drafts</h3>
+            {drafts.length > 0 && (
+              <button
+                onClick={() => router.push("/dashboard/documents")}
+                className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer"
+              >
+                View All Drafts
+              </button>
+            )}
+          </div>
+          <div className="divide-y divide-gray-100">
+            {recentDrafts.length === 0 ? (
+              <div className="px-4 py-8 text-center text-xs text-gray-400">
+                No drafts yet
+              </div>
+            ) : (
+              recentDrafts.map((draft) => (
+                <button
+                  key={draft._id}
+                  onClick={() =>
+                    router.push(`/dashboard/prepare/${draft._id}`)
+                  }
+                  className="w-full text-left px-4 py-3 hover:bg-gray-50 transition cursor-pointer"
+                >
+                  <div className="flex justify-between items-center gap-3">
+                    <span className="text-sm text-gray-800 truncate">
+                      {draft.title}
+                    </span>
+                    <span className="text-[11px] text-gray-500 whitespace-nowrap">
+                      {shortDate(draft.createdAt)}
+                    </span>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+
       {previewMeeting && (
         <PdfPreviewModal
           meeting={previewMeeting}
           pageWidth={pageWidth}
           onClose={closePreview}
           onSign={() => router.push(`/sign/${previewMeeting._id}`)}
-          currentUserEmail={userEmail}
-          currentUserId={currentUserId}
         />
       )}
     </div>
@@ -628,71 +689,6 @@ function ActionCard({
       >
         {buttonLabel}
       </button>
-    </div>
-  );
-}
-
-// ─── RecentDraftsCard ─────────────────────────────────────────
-function RecentDraftsCard({
-  drafts,
-  onViewAll,
-  onDraftClick,
-}: {
-  drafts: any[];
-  onViewAll: () => void;
-  onDraftClick: (draftId: string) => void;
-}) {
-  return (
-    <div className="bg-white border border-gray-200 rounded-lg p-4 flex flex-col hover:shadow-md transition">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2">
-          <span className="text-indigo-600">
-            <FileText size={16} />
-          </span>
-          <h3 className="text-sm font-bold text-gray-900">Recent Drafts</h3>
-        </div>
-        {drafts.length > 0 && (
-          <button
-            onClick={onViewAll}
-            className="text-[10px] text-indigo-600 hover:text-indigo-800 font-semibold cursor-pointer"
-          >
-            View All
-          </button>
-        )}
-      </div>
-
-      {drafts.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center py-4">
-          <div className="w-8 h-8 bg-gray-100 rounded-full flex items-center justify-center mb-2">
-            <FileText size={14} className="text-gray-400" />
-          </div>
-          <p className="text-[11px] text-gray-400 text-center">
-            No drafts yet
-          </p>
-        </div>
-      ) : (
-        <div className="flex-1 space-y-1.5 overflow-hidden">
-          {drafts.slice(0, 3).map((draft) => (
-            <button
-              key={draft._id}
-              onClick={() => onDraftClick(draft._id)}
-              className="w-full text-left flex items-center justify-between gap-2 py-1 hover:bg-gray-50 rounded px-1 -mx-1 transition cursor-pointer"
-            >
-              <span className="text-[11px] text-gray-700 truncate">
-                {draft.title}
-              </span>
-              <span className="text-[10px] text-gray-400 whitespace-nowrap">
-                {shortDate(draft.createdAt)}
-              </span>
-            </button>
-          ))}
-          {drafts.length > 3 && (
-            <div className="text-[10px] text-gray-400 text-center pt-1">
-              +{drafts.length - 3} more
-            </div>
-          )}
-        </div>
-      )}
     </div>
   );
 }

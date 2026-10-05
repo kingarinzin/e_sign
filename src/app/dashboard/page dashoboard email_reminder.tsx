@@ -57,7 +57,6 @@ export default function Dashboard() {
   const [isUploading, setIsUploading] = useState(false);
   const [userEmail, setUserEmail] = useState<string | null>(null);
   const [userName, setUserName] = useState<string>("");
-  const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [previewMeeting, setPreviewMeeting] = useState<Meeting | null>(null);
   const [pageWidth, setPageWidth] = useState(500);
 
@@ -100,7 +99,6 @@ export default function Dashboard() {
         if (profileRes.ok) {
           const data = await profileRes.json();
           setUserName(data.name || data.email || "User");
-          setCurrentUserId(data._id || data.id || null);
           setSignatureImg(data.signature || null);
           setInitialsImg(data.initialSignature || null);
           if (data.signature)
@@ -325,6 +323,7 @@ export default function Dashboard() {
           }
         />
 
+        {/* ⬇️ ADD A CONTACT REPLACED with RECENT DRAFTS card */}
         <RecentDraftsCard
           drafts={recentDrafts}
           onViewAll={() => router.push("/dashboard/documents?tab=drafts")}
@@ -577,15 +576,12 @@ export default function Dashboard() {
         </div>
       </div>
 
-      {/* ─── PDF Preview Modal ──────────────────────────────── */}
       {previewMeeting && (
         <PdfPreviewModal
           meeting={previewMeeting}
           pageWidth={pageWidth}
           onClose={closePreview}
           onSign={() => router.push(`/sign/${previewMeeting._id}`)}
-          currentUserEmail={userEmail}
-          currentUserId={currentUserId}
         />
       )}
     </div>
