@@ -8,6 +8,9 @@ import {
   Send,
   Loader2,
   MailCheck,
+  Users,
+  TrendingUp,
+  Timer,
 } from "lucide-react";
 
 interface Participant {
@@ -44,11 +47,16 @@ function timeAgo(dateStr?: string): string {
   return new Date(dateStr).toLocaleDateString();
 }
 
-function isOverdue(meeting: { sentAt?: string }): boolean {
-  if (!meeting.sentAt) return false;
-  const daysSinceSent =
-    (Date.now() - new Date(meeting.sentAt).getTime()) / (1000 * 60 * 60 * 24);
-  return daysSinceSent >= 3;
+function shortDateTime(dateStr?: string): string {
+  if (!dateStr) return "—";
+  return new Date(dateStr).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+  }) + ", " + new Date(dateStr).toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
 }
 
 export default function SignerTrace({
@@ -64,20 +72,49 @@ export default function SignerTrace({
 
   // ─── Compute stats ────────────────────────────────────────
   const signers = useMemo(
-    () => meeting.participants.filter((p) => p.role === "Signer"),
+    () => meeting.participants.filter((p) => p.role === "Signer" || !p.role),
     [meeting.participants]
   );
   const ccs = useMemo(
-    () => meeting.participants.filter((p) => p.role !== "Signer"),
+    () => meeting.participants.filter((p) => p.role && p.role !== "Signer"),
     [meeting.participants]
   );
 
-  const signedCount = signers.filter((p) => p.signed).length;
+  const signedSigners = useMemo(
+    () => signers.filter((p) => p.signed),
+    [signers]
+  );
+  const pendingSigners = useMemo(
+    () => signers.filter((p) => !p.signed),
+    [signers]
+  );
+
+  const signedCount = signedSigners.length;
   const totalSigners = signers.length;
   const unsignedCount = totalSigners - signedCount;
   const allSigned = totalSigners > 0 && signedCount === totalSigners;
   const progressPct = totalSigners > 0 ? (signedCount / totalSigners) * 100 : 0;
-  const overdue = isOverdue(meeting);
+
+  const overdue = useMemo(() => {
+    if (!meeting.sentAt) return false;
+    const days =
+      (Date.now() - new Date(meeting.sentAt).getTime()) /
+      (1000 * 60 * 60 * 24);
+    return days >= 3;
+  }, [meeting.sentAt]);
+
+  const lastActivity = useMemo(() => {
+    const dates = [
+      meeting.sentAt,
+      ...signers.map((s) => s.signedAt),
+      ...signers.map((s) => s.lastRemindedAt),
+    ].filter(Boolean) as string[];
+    if (dates.length === 0) return "";
+    const latest = dates.sort(
+      (a, b) => new Date(b).getTime() - new Date(a).getTime()
+    )[0];
+    return timeAgo(latest);
+  }, [meeting.sentAt, signers]);
 
   // ─── Send reminders ───────────────────────────────────────
   const sendReminder = async (emails?: string[]) => {
@@ -101,10 +138,7 @@ export default function SignerTrace({
       });
 
       const data = await res.json();
-
-      if (!res.ok) {
-        throw new Error(data.error || "Failed to send reminders");
-      }
+      if (!res.ok) throw new Error(data.error || "Failed to send reminders");
 
       const sentCount = data.sent || 0;
       const skippedCount = data.skipped || 0;
@@ -113,12 +147,12 @@ export default function SignerTrace({
         let msg = `Reminder sent to ${sentCount} signer${
           sentCount > 1 ? "s" : ""
         }.`;
-        if (skippedCount > 0) {
-          msg += ` ${skippedCount} skipped (cooldown).`;
-        }
+        if (skippedCount > 0) msg += ` ${skippedCount} skipped (cooldown).`;
         setMessage(msg);
       } else if (skippedCount > 0) {
-        setMessage(`${skippedCount} signer(s) are in cooldown. Try again later.`);
+        setMessage(
+          `${skippedCount} signer(s) are in cooldown. Try again later.`
+        );
       } else {
         setMessage("No reminders were sent.");
       }
@@ -134,11 +168,9 @@ export default function SignerTrace({
     }
   };
 
-  // ─── Cooldown check for a participant ─────────────────────
   const cooldownInfo = (p: Participant) => {
     if (!p.lastRemindedAt) return { active: false, minutesLeft: 0 };
-    const elapsed =
-      Date.now() - new Date(p.lastRemindedAt).getTime();
+    const elapsed = Date.now() - new Date(p.lastRemindedAt).getTime();
     const cooldownMs = 15 * 60 * 1000;
     if (elapsed >= cooldownMs) return { active: false, minutesLeft: 0 };
     return {
@@ -147,197 +179,269 @@ export default function SignerTrace({
     };
   };
 
-  // ─── Row status pill ──────────────────────────────────────
-  const statusPill = (p: Participant) => {
-    if (p.signed) {
-      return (
-        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider bg-green-100 text-green-700 px-2 py-0.5 rounded-full border border-green-200">
-          <CheckCircle2 size={10} /> Signed
-        </span>
-      );
-    }
-    if (p.isCurrent) {
-      return (
-        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full border border-amber-200">
-          <Clock size={10} /> Waiting
-        </span>
-      );
-    }
-    if (overdue) {
-      return (
-        <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider bg-red-100 text-red-700 px-2 py-0.5 rounded-full border border-red-200">
-          <AlertCircle size={10} /> Overdue
-        </span>
-      );
-    }
-    return (
-      <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full border border-gray-200">
-        <Clock size={10} /> Pending
+  // ─── Single signer row ───────────────────────────────────
+  const SignerRow = ({ p, index }: { p: Participant; index: number }) => {
+    const isMe =
+      currentUserEmail &&
+      p.email.toLowerCase() === currentUserEmail.toLowerCase();
+    const cooldown = cooldownInfo(p);
+    const isOverdueRow = !p.signed && overdue;
+
+    // Left accent color
+    const accentColor = p.signed
+      ? "border-l-green-500"
+      : isOverdueRow
+      ? "border-l-red-500"
+      : p.isCurrent
+      ? "border-l-amber-500"
+      : "border-l-gray-300";
+
+    // Icon
+    const icon = p.signed ? (
+      <CheckCircle2 size={16} className="text-green-600 shrink-0" />
+    ) : isOverdueRow ? (
+      <AlertCircle size={16} className="text-red-600 shrink-0" />
+    ) : p.isCurrent ? (
+      <Clock
+        size={16}
+        className="text-amber-600 shrink-0 animate-pulse"
+      />
+    ) : (
+      <Clock size={16} className="text-gray-400 shrink-0" />
+    );
+
+    // Status badge
+    const badge = p.signed ? (
+      <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-semibold whitespace-nowrap">
+        Signed
       </span>
+    ) : isOverdueRow ? (
+      <span className="text-[10px] bg-red-100 text-red-700 px-2 py-0.5 rounded-full font-semibold whitespace-nowrap">
+        Overdue
+      </span>
+    ) : p.isCurrent ? (
+      <span className="text-[10px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded-full font-semibold whitespace-nowrap">
+        Waiting
+      </span>
+    ) : (
+      <span className="text-[10px] bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full font-semibold whitespace-nowrap">
+        Pending
+      </span>
+    );
+
+    // Metadata line
+    const metaParts: string[] = [p.email];
+    if (p.role === "Signer" || !p.role) metaParts.push("Signer");
+    if (p.signed && p.signedAt) metaParts.push(`Signed ${timeAgo(p.signedAt)}`);
+    if (!p.signed && p.lastRemindedAt)
+      metaParts.push(`Reminded ${timeAgo(p.lastRemindedAt)}`);
+    if (!p.signed && !p.lastRemindedAt && meeting.sentAt)
+      metaParts.push(`Sent ${timeAgo(meeting.sentAt)}`);
+    if (!p.signed && p.isCurrent) metaParts.push("Waiting for turn");
+
+    return (
+      <div
+        className={`bg-white border border-gray-200 border-l-4 ${accentColor} rounded-lg px-4 py-3 hover:shadow-sm transition group`}
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex items-start gap-3 flex-1 min-w-0">
+            {/* Icon */}
+            <div className="mt-0.5">{icon}</div>
+
+            {/* Name + meta */}
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-semibold text-gray-900 truncate">
+                  {p.name}
+                  {isMe && (
+                    <span className="ml-1 text-indigo-600 font-normal">
+                      (You)
+                    </span>
+                  )}
+                </span>
+                {badge}
+              </div>
+              <div className="text-[11px] text-gray-500 mt-0.5 truncate">
+                {metaParts.join(" · ")}
+              </div>
+            </div>
+          </div>
+
+          {/* Right side: timestamp or remind button */}
+          <div className="shrink-0 flex items-center gap-2">
+            {p.signed && p.signedAt && (
+              <span className="text-[11px] text-gray-400 whitespace-nowrap hidden sm:inline">
+                {shortDateTime(p.signedAt)}
+              </span>
+            )}
+
+            {isOrganizer && !p.signed && meeting.status === "Sent" && (
+              <button
+                onClick={() => sendReminder([p.email])}
+                disabled={cooldown.active || remindingEmail === p.email}
+                className={`text-[11px] font-semibold px-2.5 py-1 rounded-md transition cursor-pointer whitespace-nowrap flex items-center gap-1 ${
+                  cooldown.active
+                    ? "bg-gray-100 text-gray-400 cursor-not-allowed"
+                    : "bg-white border border-red-300 text-red-600 hover:bg-red-50"
+                }`}
+                title={cooldown.active ? `Wait ${cooldown.minutesLeft} min` : "Send reminder"}
+              >
+                {remindingEmail === p.email ? (
+                  <Loader2 size={11} className="animate-spin" />
+                ) : cooldown.active ? (
+                  <>
+                    <Timer size={11} />
+                    {cooldown.minutesLeft}m
+                  </>
+                ) : (
+                  <>
+                    <Send size={11} />
+                    Remind
+                  </>
+                )}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
     );
   };
 
   return (
     <div className="flex flex-col h-full">
       {/* ─── Progress header ─────────────────────────────── */}
-      <div className="px-5 py-4 border-b border-gray-200 bg-white shrink-0">
+      <div className="px-5 py-4 border-b border-gray-200 bg-gradient-to-br from-white to-gray-50 shrink-0">
+        {/* Title row */}
         <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-semibold text-gray-600">
-            Signing progress
-          </span>
+          <div className="flex items-center gap-2">
+            <Users size={14} className="text-indigo-600" />
+            <span className="text-xs font-bold uppercase tracking-wider text-gray-600">
+              Signing Progress
+            </span>
+          </div>
           <span className="text-xs font-bold text-gray-900">
-            {signedCount} of {totalSigners} signed
+            {Math.round(progressPct)}% complete
           </span>
         </div>
 
-        <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden">
+        {/* Progress bar */}
+        <div className="w-full bg-gray-200 rounded-full h-2 overflow-hidden mb-3">
           <div
-            className={`h-full rounded-full transition-all ${
+            className={`h-full rounded-full transition-all duration-500 ${
               allSigned ? "bg-green-500" : "bg-blue-500"
             }`}
             style={{ width: `${progressPct}%` }}
           />
         </div>
 
-        {allSigned && (
-          <p className="text-[11px] text-green-700 font-medium mt-2 flex items-center gap-1">
-            <CheckCircle2 size={12} /> All signatures collected
-          </p>
-        )}
-
-        {isOrganizer && !allSigned && meeting.status === "Sent" && (
-          <button
-            onClick={() => sendReminder()}
-            disabled={reminding}
-            className="mt-3 w-full bg-red-500 hover:bg-red-600 text-white text-xs font-semibold py-2 rounded-md transition flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {reminding ? (
-              <>
-                <Loader2 size={12} className="animate-spin" /> Sending...
-              </>
-            ) : (
-              <>
-                <Send size={12} /> Send Reminder to All ({unsignedCount})
-              </>
-            )}
-          </button>
-        )}
+        {/* Stat row */}
+        <div className="flex items-center gap-3 text-[11px] text-gray-600 flex-wrap">
+          <span className="flex items-center gap-1">
+            <CheckCircle2 size={11} className="text-green-600" />
+            <span className="font-semibold text-gray-900">{signedCount}</span>{" "}
+            signed
+          </span>
+          <span className="text-gray-300">·</span>
+          <span className="flex items-center gap-1">
+            <Clock size={11} className="text-amber-600" />
+            <span className="font-semibold text-gray-900">
+              {unsignedCount}
+            </span>{" "}
+            pending
+          </span>
+          {lastActivity && (
+            <>
+              <span className="text-gray-300">·</span>
+              <span className="flex items-center gap-1">
+                <TrendingUp size={11} className="text-indigo-500" />
+                Last activity {lastActivity}
+              </span>
+            </>
+          )}
+        </div>
       </div>
 
-      {/* ─── Feedback message ──────────────────────────────── */}
+      {/* ─── Feedback messages ──────────────────────────────── */}
       {message && (
-        <div className="px-5 py-2 bg-green-50 border-b border-green-100 text-xs text-green-800 flex items-center gap-2">
+        <div className="px-5 py-2 bg-green-50 border-b border-green-100 text-xs text-green-800 flex items-center gap-2 shrink-0">
           <MailCheck size={12} /> {message}
         </div>
       )}
       {error && (
-        <div className="px-5 py-2 bg-red-50 border-b border-red-100 text-xs text-red-800 flex items-center gap-2">
+        <div className="px-5 py-2 bg-red-50 border-b border-red-100 text-xs text-red-800 flex items-center gap-2 shrink-0">
           <AlertCircle size={12} /> {error}
         </div>
       )}
 
-      {/* ─── Signers list ──────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto">
-        {signers.length === 0 ? (
-          <div className="p-8 text-center text-xs text-gray-400">
-            No signers on this document.
-          </div>
-        ) : (
-          <div className="divide-y divide-gray-100">
-            {signers.map((p, idx) => {
-              const isMe =
-                currentUserEmail &&
-                p.email.toLowerCase() === currentUserEmail.toLowerCase();
-              const cooldown = cooldownInfo(p);
-              const showRemindButton =
-                isOrganizer && !p.signed && meeting.status === "Sent";
-
-              return (
-                <div
-                  key={p.email || idx}
-                  className={`px-5 py-3 hover:bg-gray-50/60 transition ${
-                    isMe ? "bg-indigo-50/40" : ""
-                  }`}
+      {/* ─── Body ──────────────────────────────────────────── */}
+      <div className="flex-1 overflow-y-auto bg-gray-50 px-5 py-4 space-y-6">
+        {/* ─── Pending section ─────────────────────────────── */}
+        {pendingSigners.length > 0 && (
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500">
+                Awaiting Signature ({pendingSigners.length})
+              </h3>
+              {isOrganizer && meeting.status === "Sent" && (
+                <button
+                  onClick={() => sendReminder()}
+                  disabled={reminding}
+                  className="text-[11px] font-semibold text-red-600 hover:text-red-800 flex items-center gap-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <div className="flex items-start justify-between gap-3">
-                    {/* Left: name + email */}
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-semibold text-gray-900 truncate">
-                          {p.name}
-                          {isMe && (
-                            <span className="ml-1 text-indigo-600 font-normal">
-                              (You)
-                            </span>
-                          )}
-                        </span>
-                        {statusPill(p)}
-                      </div>
-                      <div className="text-[11px] text-gray-500 truncate mt-0.5">
-                        {p.email}
-                      </div>
-
-                      {/* Signed timestamp */}
-                      {p.signed && p.signedAt && (
-                        <div className="text-[10px] text-green-700 mt-1">
-                          Signed {timeAgo(p.signedAt)}
-                        </div>
-                      )}
-
-                      {/* Reminded timestamp */}
-                      {!p.signed && p.lastRemindedAt && (
-                        <div className="text-[10px] text-gray-500 mt-1 flex items-center gap-1">
-                          <MailCheck size={10} /> Reminded{" "}
-                          {timeAgo(p.lastRemindedAt)}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Right: Remind button */}
-                    {showRemindButton && (
-                      <button
-                        onClick={() => sendReminder([p.email])}
-                        disabled={
-                          cooldown.active || remindingEmail === p.email
-                        }
-                        className={`shrink-0 text-[11px] font-semibold px-2.5 py-1 rounded-md transition cursor-pointer whitespace-nowrap ${
-                          cooldown.active
-                            ? "bg-gray-100 text-gray-400 cursor-not-allowed"
-                            : "bg-white border border-red-300 text-red-600 hover:bg-red-50"
-                        }`}
-                        title={
-                          cooldown.active
-                            ? `Wait ${cooldown.minutesLeft} min`
-                            : "Send reminder"
-                        }
-                      >
-                        {remindingEmail === p.email ? (
-                          <Loader2 size={11} className="animate-spin" />
-                        ) : cooldown.active ? (
-                          `Wait ${cooldown.minutesLeft}m`
-                        ) : (
-                          "Remind"
-                        )}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
+                  {reminding ? (
+                    <>
+                      <Loader2 size={11} className="animate-spin" /> Sending...
+                    </>
+                  ) : (
+                    <>
+                      <Send size={11} /> Remind All
+                    </>
+                  )}
+                </button>
+              )}
+            </div>
+            <div className="space-y-2">
+              {pendingSigners.map((p, idx) => (
+                <SignerRow key={p.email || idx} p={p} index={idx} />
+              ))}
+            </div>
           </div>
         )}
 
-        {/* ─── CC list (informational) ──────────────────────── */}
-        {ccs.length > 0 && (
-          <div className="border-t border-gray-200 mt-2">
-            <div className="px-5 py-2 bg-gray-50 text-[10px] font-bold uppercase tracking-wider text-gray-500">
-              CC (informed only)
+        {/* ─── Signed section ──────────────────────────────── */}
+        {signedSigners.length > 0 && (
+          <div>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-2 flex items-center gap-1">
+              <CheckCircle2 size={12} className="text-green-600" />
+              Completed Signatures ({signedSigners.length})
+            </h3>
+            <div className="space-y-2">
+              {signedSigners.map((p, idx) => (
+                <SignerRow key={p.email || idx} p={p} index={idx} />
+              ))}
             </div>
-            <div className="divide-y divide-gray-100">
+          </div>
+        )}
+
+        {/* ─── Empty state ─────────────────────────────────── */}
+        {signers.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-12 text-gray-400">
+            <Users size={32} className="mb-2" />
+            <p className="text-xs">No signers on this document.</p>
+          </div>
+        )}
+
+        {/* ─── CC section ──────────────────────────────────── */}
+        {ccs.length > 0 && (
+          <div>
+            <h3 className="text-xs font-bold uppercase tracking-wider text-gray-500 mb-2">
+              CC (Informed Only)
+            </h3>
+            <div className="space-y-2">
               {ccs.map((p, idx) => (
                 <div
                   key={p.email || idx}
-                  className="px-5 py-2.5 flex items-center justify-between"
+                  className="bg-white border border-gray-200 rounded-lg px-4 py-2.5 flex items-center justify-between gap-3"
                 >
                   <div className="min-w-0">
                     <div className="text-xs font-medium text-gray-700 truncate">
@@ -347,11 +451,26 @@ export default function SignerTrace({
                       {p.email}
                     </div>
                   </div>
-                  <span className="text-[10px] font-bold uppercase tracking-wider bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full border border-gray-200">
+                  <span className="text-[10px] font-bold uppercase tracking-wider bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full border border-gray-200 shrink-0">
                     CC
                   </span>
                 </div>
               ))}
+            </div>
+          </div>
+        )}
+
+        {/* ─── Completion banner ───────────────────────────── */}
+        {allSigned && (
+          <div className="bg-green-50 border border-green-200 rounded-lg px-4 py-3 flex items-center gap-2">
+            <CheckCircle2 size={16} className="text-green-600 shrink-0" />
+            <div>
+              <p className="text-xs font-semibold text-green-800">
+                All signatures collected
+              </p>
+              <p className="text-[10px] text-green-700 mt-0.5">
+                This document is complete.
+              </p>
             </div>
           </div>
         )}

@@ -49,9 +49,8 @@ function requireUserId(decoded: any) {
  * this projection the /api/meetings response can be tens of MB per request,
  * causing multi-second page loads.
  *
- * The dashboard needs: name, email, role, signed, isCurrent, isExternal,
- * signedAt, lastRemindedAt, order. Plus organizerId at the meeting level
- * (for reminder-permission checks).
+ * The dashboard only needs: name, email, role, signed, isCurrent.
+ * The signing page (/sign/[id]) fetches the signatures separately.
  */
 const buildMeetingsPipeline = (matchStage: Record<string, any>) => [
   { $match: matchStage },
@@ -66,7 +65,6 @@ const buildMeetingsPipeline = (matchStage: Record<string, any>) => [
       sentAt: 1,
       createdAt: 1,
       currentSignerIndex: 1,
-      organizerId: 1,                    // ← ADDED — for organizer check
       participants: {
         $map: {
           input: { $ifNull: ["$participants", []] },
@@ -78,9 +76,6 @@ const buildMeetingsPipeline = (matchStage: Record<string, any>) => [
             signed: "$$p.signed",
             isCurrent: "$$p.isCurrent",
             isExternal: "$$p.isExternal",
-            signedAt: "$$p.signedAt",              // ← ADDED — signing timestamp
-            lastRemindedAt: "$$p.lastRemindedAt",  // ← ADDED — cooldown info
-            order: "$$p.order",                    // ← ADDED — sequential order
           },
         },
       },
